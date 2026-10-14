@@ -1,6 +1,7 @@
 """Tests for the app metadata, run and CORS configurations."""
 
 import json
+from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
@@ -33,7 +34,10 @@ VALID_CONFIG = {
 
 
 class TestAppMetadataConfig:
-    def test_from_json_joins_description_lines(self, tmp_path):
+    """Tests for :class:`AppMetadataConfig`."""
+
+    def test_from_json_joins_description_lines(self, tmp_path: Path) -> None:
+        """``from_json`` joins the JSON description lines with newlines."""
         path = tmp_path / "metadata.json"
         path.write_text(json.dumps(VALID_METADATA))
         cfg = AppMetadataConfig.from_json(path=str(path))
@@ -42,21 +46,26 @@ class TestAppMetadataConfig:
         assert cfg.summary == "Geographic data sharing API."
         assert cfg.version == "0.1.0"
 
-    def test_frozen(self, tmp_path):
+    def test_frozen(self, tmp_path: Path) -> None:
+        """The config model is immutable (frozen)."""
         path = tmp_path / "metadata.json"
         path.write_text(json.dumps(VALID_METADATA))
         cfg = AppMetadataConfig.from_json(path=str(path))
         with pytest.raises(ValidationError):
             cfg.title = "other"
 
-    def test_project_metadata_json_is_valid(self):
+    def test_project_metadata_json_is_valid(self) -> None:
+        """The project's ``project_metadata.json`` parses into a valid config."""
         cfg = AppMetadataConfig.from_json()
         assert cfg.title == "GEO_API"
         assert cfg.version
 
 
 class TestAppRunConfig:
-    def test_from_json(self, tmp_path):
+    """Tests for :class:`AppRunConfig`."""
+
+    def test_from_json(self, tmp_path: Path) -> None:
+        """``from_json`` reads the nested ``app_run`` section."""
         path = tmp_path / "config.json"
         path.write_text(json.dumps(VALID_CONFIG))
         cfg = AppRunConfig.from_json(path=str(path))
@@ -65,20 +74,25 @@ class TestAppRunConfig:
         assert cfg.reload is False
         assert cfg.log_level == "info"
 
-    def test_frozen(self, tmp_path):
+    def test_frozen(self, tmp_path: Path) -> None:
+        """The config model is immutable (frozen)."""
         path = tmp_path / "config.json"
         path.write_text(json.dumps(VALID_CONFIG))
         cfg = AppRunConfig.from_json(path=str(path))
         with pytest.raises(ValidationError):
             cfg.port = 9000
 
-    def test_project_config_json_is_valid(self):
+    def test_project_config_json_is_valid(self) -> None:
+        """The project's ``project_config.json`` parses into a valid config."""
         cfg = AppRunConfig.from_json()
         assert cfg.port == 8000
 
 
 class TestCORSMiddlewareConfig:
-    def test_from_json(self, tmp_path):
+    """Tests for :class:`CORSMiddlewareConfig`."""
+
+    def test_from_json(self, tmp_path: Path) -> None:
+        """``from_json`` reads the nested ``cors_middleware`` section."""
         path = tmp_path / "config.json"
         path.write_text(json.dumps(VALID_CONFIG))
         cfg = CORSMiddlewareConfig.from_json(path=str(path))
@@ -87,13 +101,15 @@ class TestCORSMiddlewareConfig:
         assert cfg.allow_methods == ["*"]
         assert cfg.allow_headers == ["*"]
 
-    def test_frozen(self, tmp_path):
+    def test_frozen(self, tmp_path: Path) -> None:
+        """The config model is immutable (frozen)."""
         path = tmp_path / "config.json"
         path.write_text(json.dumps(VALID_CONFIG))
         cfg = CORSMiddlewareConfig.from_json(path=str(path))
         with pytest.raises(ValidationError):
             cfg.allow_origins = ["https://example.com"]
 
-    def test_project_config_json_is_valid(self):
+    def test_project_config_json_is_valid(self) -> None:
+        """The project's ``project_config.json`` parses into a valid config."""
         cfg = CORSMiddlewareConfig.from_json()
         assert cfg.allow_origins == ["*"]

@@ -1,5 +1,6 @@
 """Tests for the main router (root, hello, health)."""
 
+from collections.abc import Generator
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -11,7 +12,8 @@ from model.message import ResponseMessage
 
 
 @pytest.fixture()
-def client():
+def client() -> Generator[TestClient, None, None]:
+    """Yield a TestClient for the FastAPI app (runs lifespan)."""
     from main import app
 
     with TestClient(app) as test_client:
@@ -25,7 +27,8 @@ def client():
         ("/hello", "Hello GEO_API"),
     ],
 )
-def test_hello_endpoints_return_200(client, endpoint_url: str, expected_title: str):
+def test_hello_endpoints_return_200(client: TestClient, endpoint_url: str, expected_title: str) -> None:
+    """Root and hello endpoints return a 200 greeting message."""
     # Arrange
     # Act
     response = client.get(endpoint_url)
@@ -38,7 +41,8 @@ def test_hello_endpoints_return_200(client, endpoint_url: str, expected_title: s
     assert message.code == status.HTTP_200_OK
 
 
-def test_health_returns_200_when_database_is_reachable(client, monkeypatch):
+def test_health_returns_200_when_database_is_reachable(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Health returns 200 when the provider connects successfully."""
     # Arrange
     mock_provider = MagicMock()
     mock_provider.connect = AsyncMock()
@@ -55,7 +59,8 @@ def test_health_returns_200_when_database_is_reachable(client, monkeypatch):
     mock_provider.connect.assert_awaited_once()
 
 
-def test_health_returns_503_when_database_is_down(client, monkeypatch):
+def test_health_returns_503_when_database_is_down(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Health returns 503 when the provider raises SupabaseServerDownError."""
     # Arrange
     mock_provider = MagicMock()
     mock_provider.connect = AsyncMock(side_effect=error.SupabaseServerDownError("Supabase Postgres DB server is down."))

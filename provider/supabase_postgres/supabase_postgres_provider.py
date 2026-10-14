@@ -16,6 +16,7 @@ import util
 from model.config.supabase_config import SupabaseConnectionConfig
 from provider.db.i_db_provider import IDbProvider
 
+# Exception types wrapped into SupabaseServerDownError by every provider operation.
 CONNECTION_ERRORS = (
     sqlalchemy.exc.OperationalError,
     sqlalchemy.exc.InterfaceError,
@@ -44,7 +45,7 @@ class SupabasePostgresProvider(IDbProvider):
         connection_url: str | None = None,
         db_engine: AsyncEngine | None = None,
         logger: logging.Logger | None = None,
-    ):
+    ) -> None:
         """Initialize the provider.
 
         Args:

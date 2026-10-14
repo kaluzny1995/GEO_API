@@ -17,7 +17,7 @@ class SupabasePostgresDbDataQualityProvider(IDbDataQualityProvider):
 
     supabase_postgres_provider: IDbProvider
 
-    def __init__(self, supabase_postgres_provider: IDbProvider | None = None):
+    def __init__(self, supabase_postgres_provider: IDbProvider | None = None) -> None:
         """Initialize the provider.
 
         Args:

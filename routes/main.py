@@ -10,7 +10,11 @@ router = APIRouter()
 
 @router.get("/", response_model=ResponseMessage, tags=["main"])
 async def root() -> ResponseMessage:
-    """Root endpoint — basic liveness message."""
+    """Root endpoint — basic liveness message.
+
+    Returns:
+        A 200 greeting message.
+    """
     return ResponseMessage(
         title="Hello GEO_API",
         description="Successful response.",
@@ -20,7 +24,11 @@ async def root() -> ResponseMessage:
 
 @router.get("/hello", response_model=ResponseMessage, tags=["main"])
 async def hello() -> ResponseMessage:
-    """Hello endpoint — basic liveness message."""
+    """Hello endpoint — basic liveness message.
+
+    Returns:
+        A 200 greeting message.
+    """
     return ResponseMessage(
         title="Hello GEO_API",
         description="Successful response.",

@@ -6,13 +6,14 @@ Python 3.11 REST API for sharing geographic data from the GEO pipeline.
 
 GEO_API is the data-sharing layer of the GIS data pipeline, sitting alongside [GEO_Download](../GEO_Download), [GEO_ETL](../GEO_ETL) and [GEO_E2E](../GEO_E2E). It serves the clean, analysis-ready datasets loaded into Supabase (PostgreSQL) by GEO_ETL through a FastAPI REST interface, so dashboards, notebooks and other services can consume geographic data over HTTP.
 
-> Status: runnable FastAPI app with a working Supabase Postgres connector (SQLModel + SQLAlchemy async engine); dataset endpoints come next.
+> Status: first data endpoint live — `GET /data-quality/...` serves GEO_ETL's `geo.data_quality` metrics; more dataset endpoints to come.
 
 ## Features
 
 - **Runnable FastAPI app** — `run.py` entry point, Swagger UI at `/docs`, `/health` check, CORS
+- **Data quality metrics** — read-only `GET /data-quality/{table_name}[/{file_date}]` over GEO_ETL's `geo.data_quality` (ETLReddit-style provider layer)
 - **Supabase connector** — SQLModel + SQLAlchemy 2.0 async engine (asyncpg), credentials from `.env` like GEO_ETL, PgBouncer-safe prepared statements
-- **Typed contracts** — Pydantic v2 request/response models (`ResponseMessage`)
+- **Typed contracts** — Pydantic v2 request/response models (`DataQuality`, `ResponseMessage`)
 - **Dev tooling** — ruff (lint/format), mypy (type checking), tox (isolated checks: lint, typecheck, py311, warnings)
 
 ## Tech Stack
@@ -97,11 +98,18 @@ Swagger UI: http://127.0.0.1:8000/docs — OpenAPI schema is generated automatic
 
 ### Endpoints
 
-| Method | Path      | Description                                                      |
-|--------|-----------|------------------------------------------------------------------|
-| GET    | `/`       | Liveness message (`ResponseMessage`)                             |
-| GET    | `/hello`  | Liveness message (`ResponseMessage`)                             |
-| GET    | `/health` | Verifies the Supabase Postgres connection — 200 or 503          |
+| Method | Path                                  | Description                                                                 |
+|--------|---------------------------------------|-----------------------------------------------------------------------------|
+| GET    | `/`                                   | Liveness message (`ResponseMessage`)                                        |
+| GET    | `/hello`                              | Liveness message (`ResponseMessage`)                                        |
+| GET    | `/health`                             | Verifies the Supabase Postgres connection — 200 or 503                      |
+| GET    | `/data-quality/{table_name}`               | Overall quality snapshot (`file_date = "overall"`) — list of metrics        |
+| GET    | `/data-quality/{table_name}/{file_date}`    | Quality metrics of one `YYYY-MM-DD` snapshot — list of metrics              |
+| GET    | `/data-quality/{table_name}/file-dates`     | Quality metrics of many snapshots — `?file_dates=...` (repeated or comma-separated) |
+
+Data quality rows come from `geo.data_quality` (written by GEO_ETL's DATA_QUALITY job — metric
+families documented in [GEO_ETL docs](../GEO_ETL/docs/data-quality-metrics.md)). The endpoint is
+read-only; an empty list means no metrics for that table/date.
 
 `SupabaseServerDownError` anywhere in a request is mapped to **503 Service Unavailable**
 by the global handler in `error_handlers.py`. The engine's connection pool is disposed on
@@ -135,16 +143,21 @@ GEO_API/
 │   │   ├── app_run_config.py      # config.json → uvicorn kwargs
 │   │   ├── cors_middleware_config.py
 │   │   └── supabase_config.py     # .env → asyncpg URL
+│   ├── data_quality.py            # DataQuality — geo.data_quality row layout
 │   └── message.py                 # ResponseMessage
 ├── provider/
 │   ├── db/
+│   │   ├── i_db_data_quality_provider.py  # read-only data quality interface
 │   │   └── i_db_provider.py       # database provider interface (async)
 │   └── supabase_postgres/
+│       ├── supabase_postgres_data_quality_provider.py  # geo.data_quality reads
 │       └── supabase_postgres_provider.py  # SQLModel + asyncpg provider, get_session
 ├── routes/
+│   ├── data_quality.py            # GET /data-quality/...
 │   └── main.py                    # /, /hello, /health router
 ├── test/
 │   ├── model/config/              # config tests (no network)
+│   ├── provider/supabase_postgres/  # provider tests (base provider mocked)
 │   └── routes/                    # endpoint tests (DB mocked)
 ├── main.py                        # FastAPI app (uvicorn main:app)
 ├── run.py                         # uvicorn entry point (config.json → app_run)

@@ -10,7 +10,7 @@ import error
 from error_handlers import supabase_server_down_error_handler
 from model.config import AppMetadataConfig, CORSMiddlewareConfig
 from provider import dispose_provider
-from routes import main_router
+from routes import data_quality_router, main_router
 
 
 @asynccontextmanager
@@ -31,4 +31,5 @@ cors_middleware_config = CORSMiddlewareConfig.from_json()
 app.add_middleware(CORSMiddleware, **cors_middleware_config.model_dump())
 
 app.include_router(main_router)
+app.include_router(data_quality_router)
 app.add_exception_handler(error.SupabaseServerDownError, supabase_server_down_error_handler)  # type: ignore[arg-type]

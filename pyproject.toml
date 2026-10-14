@@ -33,6 +33,7 @@ quote-style = "double"
 [tool.pytest.ini_options]
 testpaths = ["test"]
 addopts = "-q"
+asyncio_mode = "auto"
 
 [tool.mypy]
 files = [

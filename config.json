@@ -1,0 +1,14 @@
+{
+  "app_run": {
+    "host": "127.0.0.1",
+    "port": 8000,
+    "reload": false,
+    "log_level": "info"
+  },
+  "cors_middleware": {
+    "allow_origins": ["*"],
+    "allow_credentials": false,
+    "allow_methods": ["*"],
+    "allow_headers": ["*"]
+  }
+}

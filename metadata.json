@@ -1,0 +1,9 @@
+{
+  "title": "GEO_API",
+  "description": [
+    "REST API for sharing geographic data from the GEO pipeline.",
+    "Serves the analysis-ready datasets stored in Supabase (PostgreSQL) by GEO_ETL."
+  ],
+  "summary": "Geographic data sharing API.",
+  "version": "0.1.0"
+}

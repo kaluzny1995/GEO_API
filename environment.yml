@@ -11,7 +11,9 @@ dependencies:
   - pandas>=2.0
   - geopandas>=0.14
   - sqlalchemy>=2.0
-  - psycopg2>=2.9
+  - greenlet>=3.0
+  - sqlmodel>=0.0.22
+  - asyncpg>=0.29
   - httpx>=0.27
   - python-multipart>=0.0.9
   - pytest>=7.0.0

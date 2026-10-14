@@ -6,15 +6,14 @@ Python 3.11 REST API for sharing geographic data from the GEO pipeline.
 
 GEO_API is the data-sharing layer of the GIS data pipeline, sitting alongside [GEO_Download](../GEO_Download), [GEO_ETL](../GEO_ETL) and [GEO_E2E](../GEO_E2E). It serves the clean, analysis-ready datasets loaded into Supabase (PostgreSQL) by GEO_ETL through a FastAPI REST interface, so dashboards, notebooks and other services can consume geographic data over HTTP.
 
-> Status: initial scaffold — repository and environment setup only; application code comes next.
+> Status: runnable FastAPI app with a working Supabase Postgres connector (SQLModel + SQLAlchemy async engine); dataset endpoints come next.
 
 ## Features
 
-- **FastAPI** — async REST API with automatic OpenAPI/Swagger documentation
-- **Geospatial handling** — GeoPandas + Shapely for geometries, GeoJSON responses
-- **Typed contracts** — Pydantic v2 request/response models
-- **Database access** — SQLAlchemy over Supabase PostgreSQL
-- **Dev tooling** — ruff (lint/format), mypy (type checking), tox (isolated checks)
+- **Runnable FastAPI app** — `run.py` entry point, Swagger UI at `/docs`, `/health` check, CORS
+- **Supabase connector** — SQLModel + SQLAlchemy 2.0 async engine (asyncpg), credentials from `.env` like GEO_ETL, PgBouncer-safe prepared statements
+- **Typed contracts** — Pydantic v2 request/response models (`ResponseMessage`)
+- **Dev tooling** — ruff (lint/format), mypy (type checking), tox (isolated checks: lint, typecheck, py311, warnings)
 
 ## Tech Stack
 
@@ -26,7 +25,8 @@ GEO_API is the data-sharing layer of the GIS data pipeline, sitting alongside [G
 | Validation     | Pydantic >= 2.0.0                             |
 | DataFrames     | pandas >= 2.0                                 |
 | Geospatial     | GeoPandas >= 0.14 (Shapely, pyproj, pyogrio)  |
-| Database       | PostgreSQL (Supabase) via SQLAlchemy >= 2.0   |
+| Database       | PostgreSQL (Supabase) via SQLModel + SQLAlchemy 2.0 async |
+| DB driver      | asyncpg >= 0.29                               |
 | HTTP client    | httpx >= 0.27                                 |
 | Testing        | pytest >= 7.0.0                               |
 | Lint / format  | ruff >= 0.6                                   |
@@ -47,15 +47,116 @@ conda env create -f environment.yml
 
 # Activate it
 conda activate geo_api_311
+
+# Configure Supabase credentials (same project/schema as GEO_ETL writes to)
+cp .env.example .env   # then fill in the values
 ```
 
 Packages are resolved from conda-forge (geospatial binaries) with ruff, tox and mypy installed via pip — see [`environment.yml`](environment.yml).
+
+### Configuration
+
+Supabase credentials are read from `.env` in the project root (see `.env.example`) — the same
+five variables as GEO_ETL: `SUPABASE_DB_USER`, `SUPABASE_DB_PASSWORD`, `SUPABASE_DB_HOST`,
+`SUPABASE_DB_PORT` (transaction pooler, `6543`), `SUPABASE_DB_NAME`. Environment variables
+override the file. The connection URL enables `ssl=require` and PgBouncer-safe prepared
+statements automatically.
+
+### Database access
+
+```python
+from provider import get_provider, get_session  # get_session: FastAPI Depends
+from sqlmodel import select
+
+# One-off:
+provider = get_provider()
+await provider.connect()  # SELECT 1 health check
+rows = await provider.run_select_statement(select(MyTable).where(...))
+
+
+# In a FastAPI endpoint:
+@app.get("/events")
+async def list_events(session: AsyncSession = Depends(get_session)): ...
+```
+
+The provider pattern (interface + Supabase implementation) mirrors [ETLReddit](https://github.com/kaluzny1995/ETLReddit), upgraded to an async engine so it will not block FastAPI's event loop.
+
+## Run the API
+
+```bash
+conda activate geo_api_311
+
+# Entry point (host/port/reload from config.json → app_run)
+python run.py
+
+# Or directly:
+uvicorn main:app --host 127.0.0.1 --port 8000
+```
+
+Swagger UI: http://127.0.0.1:8000/docs — OpenAPI schema is generated automatically.
+
+### Endpoints
+
+| Method | Path      | Description                                                      |
+|--------|-----------|------------------------------------------------------------------|
+| GET    | `/`       | Liveness message (`ResponseMessage`)                             |
+| GET    | `/hello`  | Liveness message (`ResponseMessage`)                             |
+| GET    | `/health` | Verifies the Supabase Postgres connection — 200 or 503          |
+
+`SupabaseServerDownError` anywhere in a request is mapped to **503 Service Unavailable**
+by the global handler in `error_handlers.py`. The engine's connection pool is disposed on
+shutdown via the FastAPI lifespan (`dispose_provider`).
+
+## Testing & code quality
+
+```bash
+pytest                 # unit tests (no network — DB is mocked)
+ruff check .           # lint
+ruff format --check .  # format check (tox -e format-fix to apply)
+mypy                   # type check
+```
+
+Or run everything in isolated environments (like GEO_ETL):
+
+```bash
+tox                    # lint + py311 (default envlist)
+tox -e typecheck       # mypy
+tox -e format          # format check
+tox -e warnings        # tests with warnings-as-errors
+```
 
 ## Project structure
 
 ```text
 GEO_API/
-├── environment.yml   # conda environment: geo_api_311 (Python 3.11)
+├── model/
+│   ├── config/                    # app metadata, run, CORS and Supabase configs
+│   │   ├── app_metadata_config.py # metadata.json → FastAPI kwargs
+│   │   ├── app_run_config.py      # config.json → uvicorn kwargs
+│   │   ├── cors_middleware_config.py
+│   │   └── supabase_config.py     # .env → asyncpg URL
+│   └── message.py                 # ResponseMessage
+├── provider/
+│   ├── db/
+│   │   └── i_db_provider.py       # database provider interface (async)
+│   └── supabase_postgres/
+│       └── supabase_postgres_provider.py  # SQLModel + asyncpg provider, get_session
+├── routes/
+│   └── main.py                    # /, /hello, /health router
+├── test/
+│   ├── model/config/              # config tests (no network)
+│   └── routes/                    # endpoint tests (DB mocked)
+├── main.py                        # FastAPI app (uvicorn main:app)
+├── run.py                         # uvicorn entry point (config.json → app_run)
+├── error_handlers.py              # SupabaseServerDownError → 503
+├── error.py                       # SupabaseServerDownError
+├── util.py                        # logger + batch helpers
+├── metadata.json                  # FastAPI metadata (title, description, version)
+├── config.json                    # app_run + cors_middleware settings
+├── environment.yml                # conda environment: geo_api_311 (Python 3.11)
+├── pyproject.toml                 # ruff / pytest / mypy config
+├── tox.ini                        # lint, format, typecheck, py311, warnings
+├── .env.example                   # Supabase credentials template
 ├── README.md
 └── .gitignore
 ```

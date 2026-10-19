@@ -6,14 +6,15 @@ Python 3.11 REST API for sharing geographic data from the GEO pipeline.
 
 GEO_API is the data-sharing layer of the GIS data pipeline, sitting alongside [GEO_Download](../GEO_Download), [GEO_ETL](../GEO_ETL) and [GEO_E2E](../GEO_E2E). It serves the clean, analysis-ready datasets loaded into Supabase (PostgreSQL) by GEO_ETL through a FastAPI REST interface, so dashboards, notebooks and other services can consume geographic data over HTTP.
 
-> Status: first data endpoint live — `GET /data-quality/...` serves GEO_ETL's `geo.data_quality` metrics; more dataset endpoints to come.
+> Status: data endpoints live — `GET /data-quality/...` serves GEO_ETL's `geo.data_quality` metrics and `GET /event-counts/...` serves aggregates over GEO_ETL's `geo.union_etl`; more dataset endpoints to come.
 
 ## Features
 
 - **Runnable FastAPI app** — `run.py` entry point, Swagger UI at `/docs`, `/health` check, CORS
 - **Data quality metrics** — read-only `GET /data-quality/{table_name}[/{file_date}]` over GEO_ETL's `geo.data_quality` (ETLReddit-style provider layer)
+- **Event counts** — read-only `GET /event-counts/category` and `GET /event-counts/location`, `COUNT(*)` aggregates over GEO_ETL's `geo.union_etl` grouped by five columns
 - **Supabase connector** — SQLModel + SQLAlchemy 2.0 async engine (asyncpg), credentials from `.env` like GEO_ETL, PgBouncer-safe prepared statements
-- **Typed contracts** — Pydantic v2 request/response models (`DataQuality`, `ResponseMessage`)
+- **Typed contracts** — Pydantic v2 request/response models (`DataQuality`, `EventCategoryCount`, `EventLocationCount`, `ResponseMessage`)
 - **Dev tooling** — ruff (lint/format), mypy (type checking), tox (isolated checks: lint, typecheck, py311, warnings)
 
 ## Tech Stack
@@ -98,18 +99,35 @@ Swagger UI: http://127.0.0.1:8000/docs — OpenAPI schema is generated automatic
 
 ### Endpoints
 
-| Method | Path                                  | Description                                                                 |
-|--------|---------------------------------------|-----------------------------------------------------------------------------|
-| GET    | `/`                                   | Liveness message (`ResponseMessage`)                                        |
-| GET    | `/hello`                              | Liveness message (`ResponseMessage`)                                        |
-| GET    | `/health`                             | Verifies the Supabase Postgres connection — 200 or 503                      |
-| GET    | `/data-quality/{table_name}`               | Overall quality snapshot (`file_date = "overall"`) — list of metrics        |
-| GET    | `/data-quality/{table_name}/{file_date}`    | Quality metrics of one `YYYY-MM-DD` snapshot — list of metrics              |
-| GET    | `/data-quality/{table_name}/file-dates`     | Quality metrics of many snapshots — `?file_dates=...` (repeated or comma-separated) |
+| Method   | Path                                     | Description                                                                         |
+| -------- | ---------------------------------------- | ----------------------------------------------------------------------------------- |
+| GET      | `/`                                      | Liveness message (`ResponseMessage`)                                                |
+| GET      | `/hello`                                 | Liveness message (`ResponseMessage`)                                                |
+| GET      | `/health`                                | Verifies the Supabase Postgres connection — 200 or 503                              |
+| GET      | `/data-quality/{table_name}`             | Overall quality snapshot (`file_date = "overall"`) — list of metrics                |
+| GET      | `/data-quality/{table_name}/{file_date}` | Quality metrics of one `YYYY-MM-DD` snapshot — list of metrics                      |
+| GET      | `/data-quality/{table_name}/file-dates`  | Quality metrics of many snapshots — `?file_dates=...` (repeated or comma-separated) |
+| GET      | `/event-counts/category`                 | `geo.union_etl` row counts grouped by source, event taxonomy and danger rating      |
+| GET      | `/event-counts/location`                 | `geo.union_etl` row counts grouped by source, location and danger rating            |
 
 Data quality rows come from `geo.data_quality` (written by GEO_ETL's DATA_QUALITY job — metric
 families documented in [GEO_ETL docs](../GEO_ETL/docs/data-quality-metrics.md)). The endpoint is
 read-only; an empty list means no metrics for that table/date.
+
+Event counts aggregate the stacked event table `geo.union_etl` (the canonical 21 columns of
+[GEO_ETL docs](../GEO_ETL/docs/data-tables.md)) with `SELECT … COUNT(*) … GROUP BY`; no filters
+are applied, so the `count` values of either endpoint always sum to the full table size:
+
+| Endpoint                  | Grouped by (→ response fields)                                                                           | `count` field                                   |
+| ------------------------- | -------------------------------------------------------------------------------------------------------- | ----------------------------------------------- |
+| `/event-counts/category`  | `source_name`, `subsource_name`, `event_category`, `event_subcategory`, `danger_rating`                  | `COUNT(*)` of `geo.union_etl` rows in the group |
+| `/event-counts/location`  | `source_name`, `subsource_name`, `country_code`, `state_province`, `danger_rating`                       | `COUNT(*)` of `geo.union_etl` rows in the group |
+
+Rows are ordered by the five grouping columns (NULLs last, as in PostgreSQL `ASC`); nullable
+columns (`subsource_name`, `event_subcategory`, `state_province`, `danger_rating`) come back as
+`null`. The severity column is named `danger_rating` because that is the `geo.union_etl` column
+name — the shared scale `no_rating` / `none` / `low` / `medium` / `high` / `extreme` documented
+in [GEO_ETL's single-ETL job](../GEO_ETL/docs/etl_jobs/single-etl.md).
 
 `SupabaseServerDownError` anywhere in a request is mapped to **503 Service Unavailable**
 by the global handler in `error_handlers.py`. The engine's connection pool is disposed on
@@ -144,16 +162,21 @@ GEO_API/
 │   │   ├── cors_middleware_config.py
 │   │   └── supabase_config.py     # .env → asyncpg URL
 │   ├── data_quality.py            # DataQuality — geo.data_quality row layout
+│   ├── event_count.py             # EventCategoryCount / EventLocationCount — count rows
+│   ├── union_etl.py               # geo.union_etl — 21 canonical columns (Core table, no PK)
 │   └── message.py                 # ResponseMessage
 ├── provider/
 │   ├── db/
 │   │   ├── i_db_data_quality_provider.py  # read-only data quality interface
+│   │   ├── i_db_event_counts_provider.py  # read-only event counts interface
 │   │   └── i_db_provider.py       # database provider interface (async)
 │   └── supabase_postgres/
 │       ├── supabase_postgres_data_quality_provider.py  # geo.data_quality reads
+│       ├── supabase_postgres_event_counts_provider.py  # geo.union_etl GROUP BY counts
 │       └── supabase_postgres_provider.py  # SQLModel + asyncpg provider, get_session
 ├── routes/
 │   ├── data_quality.py            # GET /data-quality/...
+│   ├── event_counts.py            # GET /event-counts/category, /event-counts/location
 │   └── main.py                    # /, /hello, /health router
 ├── test/
 │   ├── model/config/              # config tests (no network)

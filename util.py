@@ -2,6 +2,7 @@
 
 import logging
 import os
+from collections.abc import Iterator
 from typing import Any
 
 
@@ -9,6 +10,10 @@ def setup_logger(name: str, log_file: str, level: int = logging.INFO) -> logging
     """Create a logger that writes to ``log_file``.
 
     Missing parent directories of ``log_file`` are created automatically.
+    Idempotent per ``(name, log_file)`` pair: re-requesting a logger that
+    already has a handler for this file adds no second handler, so rebuilding
+    a provider (repeatedly, e.g. in tests) neither duplicates every log line
+    nor leaks file descriptors.
 
     Args:
         name: Logger name.
@@ -22,24 +27,33 @@ def setup_logger(name: str, log_file: str, level: int = logging.INFO) -> logging
     if log_file_folder and not os.path.exists(log_file_folder):
         os.makedirs(log_file_folder)
 
-    handler = logging.FileHandler(log_file)
-    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
-
     logger = logging.getLogger(name)
     logger.setLevel(level)
-    logger.addHandler(handler)
+    resolved_log_file = os.path.abspath(log_file)
+    if not any(
+        isinstance(handler, logging.FileHandler) and handler.baseFilename == resolved_log_file
+        for handler in logger.handlers
+    ):
+        handler = logging.FileHandler(log_file)
+        handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+        logger.addHandler(handler)
 
     return logger
 
 
-def chunk_list_equal_size(objects: list[Any], batch_size: int) -> list[list[Any]]:
-    """Split ``objects`` into consecutive chunks of at most ``batch_size`` items.
+def chunk_list_equal_size(objects: list[Any], batch_size: int) -> Iterator[list[Any]]:
+    """Yield consecutive chunks of at most ``batch_size`` items.
+
+    Lazy on purpose: only the current chunk is built, so batching a large
+    list costs ``O(batch_size)`` extra memory instead of materializing every
+    chunk up front (``O(len(objects))``).
 
     Args:
         objects: Items to split.
         batch_size: Maximum number of items per chunk.
 
-    Returns:
-        A list of chunks (the last chunk may be shorter).
+    Yields:
+        Chunks in order (the last chunk may be shorter).
     """
-    return [objects[i : i + batch_size] for i in range(0, len(objects), batch_size)]
+    for start in range(0, len(objects), batch_size):
+        yield objects[start : start + batch_size]

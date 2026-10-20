@@ -126,11 +126,15 @@ class SupabasePostgresProvider(IDbProvider):
     async def run_select_statement(self, statement: Select | SelectOfScalar) -> Sequence[Any]:
         """Execute a select statement and return the results.
 
+        ``Result.all()`` already materializes the rows into a fresh list, so
+        it is returned as-is — no second copy of the result set is made, which
+        keeps the peak allocation of this stage at one list of rows.
+
         Args:
             statement: SQLModel select statement.
 
         Returns:
-            The query results.
+            The query results (the driver's row list, owned by this call).
 
         Raises:
             SupabaseServerDownError: If the database cannot be reached.
@@ -138,7 +142,7 @@ class SupabasePostgresProvider(IDbProvider):
         try:
             async with AsyncSession(self.db_engine) as session:
                 result = await session.exec(statement)
-                return list(result.all())
+                return result.all()
         except CONNECTION_ERRORS as e:
             self.logger.error(f"Supabase Postgres DB server is down. Message: {e}")
             raise error.SupabaseServerDownError(f"Supabase Postgres DB server is down. Message: {e}") from e
@@ -149,6 +153,8 @@ class SupabasePostgresProvider(IDbProvider):
         """Insert entities into the database in batches.
 
         One transaction per batch; progress is logged after each commit.
+        Chunks are pulled lazily from ``util.chunk_list_equal_size``, so only
+        the batch being written is held in addition to the input list.
 
         Args:
             entities: Rows to insert.

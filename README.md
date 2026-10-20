@@ -15,6 +15,7 @@ GEO_API is the data-sharing layer of the GIS data pipeline, sitting alongside [G
 - **Event counts** — read-only `GET /event-counts/category` and `GET /event-counts/location`, `COUNT(*)` aggregates over GEO_ETL's `geo.union_etl` grouped by five columns
 - **Supabase connector** — SQLModel + SQLAlchemy 2.0 async engine (asyncpg), credentials from `.env` like GEO_ETL, PgBouncer-safe prepared statements
 - **Typed contracts** — Pydantic v2 request/response models (`DataQuality`, `EventCategoryCount`, `EventLocationCount`, `ResponseMessage`)
+- **Predictable memory** — one materialization per stage (fetch → convert → serialize), no duplicate result copies, lazy batching, idempotent logging — profiled with `tracemalloc` (see [Memory characteristics](#memory-characteristics))
 - **Dev tooling** — ruff (lint/format), mypy (type checking), tox (isolated checks: lint, typecheck, py311, warnings)
 
 ## Tech Stack
@@ -82,6 +83,36 @@ async def list_events(session: AsyncSession = Depends(get_session)): ...
 ```
 
 The provider pattern (interface + Supabase implementation) mirrors [ETLReddit](https://github.com/kaluzny1995/ETLReddit), upgraded to an async engine so it will not block FastAPI's event loop.
+
+### Memory characteristics
+
+Every stage materializes its rows exactly once — DB fetch (`Result.all()`), row → response-model
+conversion, JSON serialization — and keeps no duplicate copy between stages. Measured with
+`tracemalloc` against the live schema (35,799 `geo.union_etl` rows, warm process; repeated runs
+vary by a few percent):
+
+| Endpoint | Rows out | Peak allocation |
+|----------|----------|-----------------|
+| `GET /event-counts/category` | 124 groups | ~0.36 MiB |
+| `GET /event-counts/location` | 905 groups | ~1.4 MiB |
+| `GET /data-quality/{table_name}` | 175 metrics | ~0.53 MiB |
+
+Three per-stage optimizations — their impact grows with data volume and process lifetime, so it
+is invisible at today's sizes:
+
+- **`run_select_statement`** returns `Result.all()` as-is. The previous
+  `list(result.all())` kept two lists of the same rows alive for every query: +7 KiB on a
+  905-row result (~8 bytes per row → ~7.6 MiB on a 1M-row result).
+- **`util.setup_logger`** is idempotent per `(logger name, log file)`: rebuilding a provider no
+  longer stacks a second `FileHandler` — 100 rebuilds went from 100 handlers / 100 open files
+  to 1 / 1 (and log lines are never duplicated).
+- **`util.chunk_list_equal_size`** yields chunks lazily: a batch insert holds only the chunk
+  being written — 35,799 rows at 1,000 per batch dropped from 282 KiB to 8 KiB of chunk lists.
+
+Streaming (`yield_per` / server-side cursors) is deliberately **not** used: asyncpg buffers the
+whole result on the wire anyway, FastAPI's `response_model` needs the full list, and the
+aggregates return at most ~10³ rows. If raw `geo.union_etl` row endpoints are added later
+(35,799 rows and growing), add pagination there instead.
 
 ## Run the API
 

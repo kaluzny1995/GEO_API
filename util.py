@@ -2,18 +2,33 @@
 
 import logging
 import os
+import sys
 from collections.abc import Iterator
+from contextvars import ContextVar
 from typing import Any
+
+_LOG_FORMAT = "%(asctime)s %(levelname)s %(message)s"
+
+# Logger of the endpoint currently handling a request. Set by the route
+# wrapper (routes/logging_route.py) and read by providers, so database
+# records (connection, SQL, row counts) land in the endpoint's log file.
+endpoint_logger: ContextVar[logging.Logger | None] = ContextVar("endpoint_logger", default=None)
 
 
 def setup_logger(name: str, log_file: str, level: int = logging.INFO) -> logging.Logger:
-    """Create a logger that writes to ``log_file``.
+    """Create a logger that writes to ``log_file`` and mirrors records to stdout.
+
+    Follows the GEO_ETL / GEO_Download convention: every record goes to the
+    log file *and* to stdout, so console runs (and subprocess orchestrators)
+    show the same output without opening the file.
 
     Missing parent directories of ``log_file`` are created automatically.
-    Idempotent per ``(name, log_file)`` pair: re-requesting a logger that
-    already has a handler for this file adds no second handler, so rebuilding
-    a provider (repeatedly, e.g. in tests) neither duplicates every log line
-    nor leaks file descriptors.
+    Idempotent per handler: re-requesting a logger that already has a handler
+    for this file (or a stdout handler) adds no second one, so rebuilding a
+    logger repeatedly (e.g. in tests) neither duplicates every log line nor
+    leaks file descriptors. Propagation is disabled: the logger owns its
+    handlers, so records never double-emit through an ancestor logger (e.g.
+    the root logger) and unrelated records never pollute the log file.
 
     Args:
         name: Logger name.
@@ -29,14 +44,26 @@ def setup_logger(name: str, log_file: str, level: int = logging.INFO) -> logging
 
     logger = logging.getLogger(name)
     logger.setLevel(level)
+    logger.propagate = False
+
     resolved_log_file = os.path.abspath(log_file)
-    if not any(
-        isinstance(handler, logging.FileHandler) and handler.baseFilename == resolved_log_file
+    existing_paths = {handler.baseFilename for handler in logger.handlers if isinstance(handler, logging.FileHandler)}
+    if resolved_log_file not in existing_paths:
+        file_handler = logging.FileHandler(log_file)
+        file_handler.setFormatter(logging.Formatter(_LOG_FORMAT))
+        logger.addHandler(file_handler)
+
+    # FileHandler is a StreamHandler subclass — only consider plain stream handlers.
+    has_stdout_handler = any(
+        isinstance(handler, logging.StreamHandler)
+        and not isinstance(handler, logging.FileHandler)
+        and handler.stream is sys.stdout
         for handler in logger.handlers
-    ):
-        handler = logging.FileHandler(log_file)
-        handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
-        logger.addHandler(handler)
+    )
+    if not has_stdout_handler:
+        stream_handler = logging.StreamHandler(sys.stdout)
+        stream_handler.setFormatter(logging.Formatter(_LOG_FORMAT))
+        logger.addHandler(stream_handler)
 
     return logger
 

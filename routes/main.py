@@ -4,8 +4,9 @@ from fastapi import APIRouter, status
 
 from model.message import ResponseMessage
 from provider import get_provider
+from routes.logging_route import LoggingRoute
 
-router = APIRouter()
+router = APIRouter(route_class=LoggingRoute)
 
 
 @router.get("/", response_model=ResponseMessage, tags=["main"])

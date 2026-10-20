@@ -16,6 +16,7 @@ GEO_API is the data-sharing layer of the GIS data pipeline, sitting alongside [G
 - **Supabase connector** — SQLModel + SQLAlchemy 2.0 async engine (asyncpg), credentials from `.env` like GEO_ETL, PgBouncer-safe prepared statements
 - **Typed contracts** — Pydantic v2 request/response models (`DataQuality`, `EventCategoryCount`, `EventLocationCount`, `ResponseMessage`)
 - **Predictable memory** — one materialization per stage (fetch → convert → serialize), no duplicate result copies, lazy batching, idempotent logging — profiled with `tracemalloc` (see [Memory characteristics](#memory-characteristics))
+- **Per-endpoint logging** — one timestamped log file per endpoint (`logs/<tag>/<handler>_<ts>.log`, file + stdout), request start/finish with status and timing, executed SQL with row counts, tracebacks at the endpoint boundary (see [Logging](#logging))
 - **Dev tooling** — ruff (lint/format), mypy (type checking), tox (isolated checks: lint, typecheck, py311, warnings)
 
 ## Tech Stack
@@ -164,6 +165,45 @@ in [GEO_ETL's single-ETL job](../GEO_ETL/docs/etl_jobs/single-etl.md).
 by the global handler in `error_handlers.py`. The engine's connection pool is disposed on
 shutdown via the FastAPI lifespan (`dispose_provider`).
 
+### Logging
+
+Every endpoint writes to its own log file, following the GEO_ETL / GEO_Download conventions
+(`%(asctime)s %(levelname)s %(message)s`, file + stdout mirror via `util.setup_logger`):
+
+- **Path:** `logs/<tag>/<handler>_<first-request timestamp>.log` — e.g.
+  `logs/event_counts/get_event_counts_by_category_2026-10-20T14-03-11.123456.log`, where the
+  directory is the router tag (`main`, `data_quality`, `event_counts`).
+- **One file per endpoint per application run**, created lazily on the endpoint's first request
+  and appended to for every subsequent request — no empty files.
+- **Content:** a start line and a finish line per request with status code and elapsed time;
+  unhandled errors are logged with a full traceback at the endpoint boundary and re-raised (so
+  the global handler can still map them, e.g. `SupabaseServerDownError` → 503); client errors
+  (4xx) are logged as warnings without a traceback.
+- **Database activity** (endpoints that query Supabase): each successful query adds
+  `Connected to Supabase Postgres`, `Executing SQL: <compiled statement> | params={...}` and
+  `Returned N records` between the start and finish lines. The Supabase provider logs through
+  the calling endpoint's logger (published via a context variable, `util.endpoint_logger`), so
+  the exact statement and row count of every query land in the endpoint's own file; outside a
+  request the provider falls back to its module logger.
+- **Namespaced, non-propagating loggers** (`geo_api.<handler>`): records never double-emit
+  through the root logger, and unrelated records (e.g. httpx access lines) never pollute an
+  endpoint file.
+- The Supabase provider creates **no log file of its own** — its module logger is handler-less;
+  connection failures surface in the calling endpoint's log file via the boundary traceback.
+- Implemented by `routes/logging_route.py` (`LoggingRoute`, an `APIRoute` subclass): every
+  router created with `APIRouter(route_class=LoggingRoute)` is covered automatically, including
+  endpoints added later.
+
+Example — the full life of one request in `logs/event_counts/get_event_counts_by_category_<ts>.log`:
+
+```text
+2026-10-20 20:08:34,335 INFO GET /event-counts/category started
+2026-10-20 20:08:34,338 INFO Connected to Supabase Postgres
+2026-10-20 20:08:34,339 INFO Executing SQL: SELECT geo.union_etl.source_name, … count(*) AS count FROM geo.union_etl GROUP BY … ORDER BY …
+2026-10-20 20:08:35,093 INFO Returned 124 records
+2026-10-20 20:08:35,094 INFO GET /event-counts/category finished with 200 in 759.3 ms
+```
+
 ## Testing & code quality
 
 ```bash
@@ -208,8 +248,10 @@ GEO_API/
 ├── routes/
 │   ├── data_quality.py            # GET /data-quality/...
 │   ├── event_counts.py            # GET /event-counts/category, /event-counts/location
+│   ├── logging_route.py           # LoggingRoute — per-endpoint log files
 │   └── main.py                    # /, /hello, /health router
 ├── test/
+│   ├── conftest.py                # autouse fixture: endpoint logs → tmp_path
 │   ├── model/config/              # config tests (no network)
 │   ├── provider/supabase_postgres/  # provider tests (base provider mocked)
 │   └── routes/                    # endpoint tests (DB mocked)

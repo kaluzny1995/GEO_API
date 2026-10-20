@@ -26,8 +26,8 @@ class _RecordingList(list):
 class TestSetupLogger:
     """Tests for :func:`util.setup_logger`."""
 
-    def test_same_name_and_file_adds_one_handler(self, tmp_path: Any) -> None:
-        """Rebuilding a logger for the same file stacks no second handler."""
+    def test_same_name_and_file_adds_one_file_handler(self, tmp_path: Any) -> None:
+        """Rebuilding a logger for the same file stacks no second file handler."""
         # Arrange
         log_file = tmp_path / "provider.log"
         name = f"test_setup_logger_{uuid4().hex}"
@@ -38,7 +38,25 @@ class TestSetupLogger:
 
         # Assert
         assert first is second
-        assert len(first.handlers) == 1
+        assert len([handler for handler in first.handlers if isinstance(handler, logging.FileHandler)]) == 1
+
+    def test_setup_logger_mirrors_to_stdout_once(self, tmp_path: Any) -> None:
+        """Every logger also mirrors records to stdout — exactly one stdout handler."""
+        # Arrange
+        log_file = tmp_path / "provider.log"
+        name = f"test_setup_logger_stdout_{uuid4().hex}"
+
+        # Act
+        util.setup_logger(name, str(log_file))
+        logger = util.setup_logger(name, str(log_file))
+
+        # Assert
+        stdout_handlers = [
+            handler
+            for handler in logger.handlers
+            if isinstance(handler, logging.StreamHandler) and not isinstance(handler, logging.FileHandler)
+        ]
+        assert len(stdout_handlers) == 1
 
     def test_same_name_and_file_logs_one_line_per_message(self, tmp_path: Any) -> None:
         """A duplicated setup never duplicates the written log lines."""
@@ -57,7 +75,7 @@ class TestSetupLogger:
         assert len(lines) == 2
         assert sum("once" in line for line in lines) == 1
 
-    def test_same_name_other_file_adds_second_handler(self, tmp_path: Any) -> None:
+    def test_same_name_other_file_adds_second_file_handler(self, tmp_path: Any) -> None:
         """The guard is per (name, file) — a genuinely new file still gets a handler."""
         # Arrange
         name = f"test_setup_logger_files_{uuid4().hex}"
@@ -67,7 +85,18 @@ class TestSetupLogger:
         logger = util.setup_logger(name, str(tmp_path / "second.log"))
 
         # Assert
-        assert len(logger.handlers) == 2
+        assert len([handler for handler in logger.handlers if isinstance(handler, logging.FileHandler)]) == 2
+
+    def test_logger_does_not_propagate(self, tmp_path: Any) -> None:
+        """The logger owns its handlers — records never reach ancestor loggers."""
+        # Arrange
+        name = f"test_setup_logger_propagate_{uuid4().hex}"
+
+        # Act
+        logger = util.setup_logger(name, str(tmp_path / "provider.log"))
+
+        # Assert
+        assert logger.propagate is False
 
     @pytest.fixture(autouse=True)
     def close_handlers(self) -> Iterator[None]:

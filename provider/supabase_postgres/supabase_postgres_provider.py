@@ -33,7 +33,8 @@ class SupabasePostgresProvider(IDbProvider):
     Attributes:
         connection_url: SQLAlchemy asyncpg connection URL.
         db_engine: Async SQLAlchemy engine (connection pool).
-        logger: Provider logger.
+        logger: Provider logger (module logger by default — no file handler;
+            the endpoint loggers own the log files).
     """
 
     connection_url: str
@@ -52,7 +53,9 @@ class SupabasePostgresProvider(IDbProvider):
             connection_url: Explicit connection URL. Defaults to the URL built
                 from ``.env`` credentials via :class:`SupabaseConnectionConfig`.
             db_engine: Pre-built async engine. Defaults to a new engine on ``connection_url``.
-            logger: Custom logger. Defaults to a file logger under ``logs/supabase/``.
+            logger: Custom logger. Defaults to the module logger (no file
+                handler — connection failures surface in the calling endpoint's
+                log file via the endpoint boundary traceback).
         """
         super().__init__()
         self.connection_url = connection_url or SupabaseConnectionConfig.from_env().get_connection_url()
@@ -67,23 +70,50 @@ class SupabasePostgresProvider(IDbProvider):
             self.connection_url,
             connect_args={"prepared_statement_name_func": lambda: f"__asyncpg_{uuid4()}__"},
         )
-        self.logger = logger or util.setup_logger(
-            name="supabase_postgres_provider",
-            log_file="logs/supabase/supabase_postgres_provider.log",
-        )
+        self.logger = logger or logging.getLogger(__name__)
+
+    def _endpoint_logger(self) -> logging.Logger:
+        """Return the calling endpoint's logger, or the provider's own logger outside a request.
+
+        During a request the route wrapper (``routes/logging_route.py``) publishes its
+        logger via ``util.endpoint_logger``; providers log through it so database
+        records land in the endpoint's log file.
+        """
+        return util.endpoint_logger.get() or self.logger
+
+    def _sql_text(self, statement: Select | SelectOfScalar) -> str:
+        """Return the statement's SQL on a single line, with bound parameters appended.
+
+        Args:
+            statement: SQLModel select statement.
+
+        Returns:
+            The compiled SQL (whitespace collapsed), `` | params={...}`` when the
+            statement has bound parameters.
+        """
+        compiled = statement.compile(dialect=self.db_engine.dialect)
+        sql = " ".join(str(compiled).split())
+        if compiled.params:
+            return f"{sql} | params={compiled.params}"
+        return sql
 
     async def connect(self) -> None:
         """Verify that the database is reachable by running ``SELECT 1``.
 
+        Logs ``Connected to Supabase Postgres`` on success (to the calling
+        endpoint's log file during a request).
+
         Raises:
             SupabaseServerDownError: If the connection cannot be established.
         """
+        log = self._endpoint_logger()
         try:
             async with self.db_engine.connect() as connection:
                 await connection.execute(sqlalchemy.text("SELECT 1"))
         except CONNECTION_ERRORS as e:
-            self.logger.error(f"Supabase Postgres DB server is down. Message: {e}")
+            log.error(f"Supabase Postgres DB server is down. Message: {e}")
             raise error.SupabaseServerDownError(f"Supabase Postgres DB server is down. Message: {e}") from e
+        log.info("Connected to Supabase Postgres")
 
     def get_logger(self) -> logging.Logger:
         """Return the provider's logger."""
@@ -104,6 +134,7 @@ class SupabasePostgresProvider(IDbProvider):
         Raises:
             SupabaseServerDownError: If the database cannot be reached.
         """
+        log = self._endpoint_logger()
         try:
             async with self.db_engine.connect() as connection:
                 has_table = await connection.run_sync(
@@ -118,9 +149,9 @@ class SupabasePostgresProvider(IDbProvider):
                         tables=[entity.__table__],  # type: ignore[attr-defined]
                     )
                 )
-            self.logger.info(f"Table '{schema}.{table}' created.")
+            log.info(f"Table '{schema}.{table}' created.")
         except CONNECTION_ERRORS as e:
-            self.logger.error(f"Supabase Postgres DB server is down. Message: {e}")
+            log.error(f"Supabase Postgres DB server is down. Message: {e}")
             raise error.SupabaseServerDownError(f"Supabase Postgres DB server is down. Message: {e}") from e
 
     async def run_select_statement(self, statement: Select | SelectOfScalar) -> Sequence[Any]:
@@ -129,6 +160,11 @@ class SupabasePostgresProvider(IDbProvider):
         ``Result.all()`` already materializes the rows into a fresh list, so
         it is returned as-is — no second copy of the result set is made, which
         keeps the peak allocation of this stage at one list of rows.
+
+        Logs to the calling endpoint's log file (via ``util.endpoint_logger``):
+        ``Connected to Supabase Postgres`` once a connection is checked out,
+        ``Executing SQL: ...`` with the compiled statement, and
+        ``Returned N records`` on success.
 
         Args:
             statement: SQLModel select statement.
@@ -139,12 +175,18 @@ class SupabasePostgresProvider(IDbProvider):
         Raises:
             SupabaseServerDownError: If the database cannot be reached.
         """
+        log = self._endpoint_logger()
         try:
             async with AsyncSession(self.db_engine) as session:
+                await session.connection()  # checks a connection out of the pool (connects if needed)
+                log.info("Connected to Supabase Postgres")
+                log.info(f"Executing SQL: {self._sql_text(statement)}")
                 result = await session.exec(statement)
-                return result.all()
+                rows = result.all()
+            log.info(f"Returned {len(rows)} records")
+            return rows
         except CONNECTION_ERRORS as e:
-            self.logger.error(f"Supabase Postgres DB server is down. Message: {e}")
+            log.error(f"Supabase Postgres DB server is down. Message: {e}")
             raise error.SupabaseServerDownError(f"Supabase Postgres DB server is down. Message: {e}") from e
 
     async def run_insert_statement(
@@ -165,6 +207,7 @@ class SupabasePostgresProvider(IDbProvider):
         Raises:
             SupabaseServerDownError: If the database cannot be reached.
         """
+        log = self._endpoint_logger()
         try:
             chunks = util.chunk_list_equal_size(entities, batch_size)
             async with AsyncSession(self.db_engine, expire_on_commit=False) as session:
@@ -173,9 +216,9 @@ class SupabasePostgresProvider(IDbProvider):
                     session.add_all(chunk)
                     await session.commit()
                     num_inserted += len(chunk)
-                    self.logger.info(f"{name.capitalize()}: {num_inserted} out of {num_entities}")
+                    log.info(f"{name.capitalize()}: {num_inserted} out of {num_entities}")
         except CONNECTION_ERRORS as e:
-            self.logger.error(f"Supabase Postgres DB server is down. Message: {e}")
+            log.error(f"Supabase Postgres DB server is down. Message: {e}")
             raise error.SupabaseServerDownError(f"Supabase Postgres DB server is down. Message: {e}") from e
 
     async def close(self) -> None:

@@ -6,8 +6,9 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from model.data_quality import DataQuality
 from provider.supabase_postgres.supabase_postgres_data_quality_provider import SupabasePostgresDbDataQualityProvider
+from routes.logging_route import LoggingRoute
 
-router = APIRouter()
+router = APIRouter(route_class=LoggingRoute)
 
 
 def get_data_quality_provider() -> SupabasePostgresDbDataQualityProvider:

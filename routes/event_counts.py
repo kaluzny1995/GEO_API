@@ -8,8 +8,9 @@ from model.event_count import EventCategoryCount, EventLocationCount
 from provider.supabase_postgres.supabase_postgres_event_counts_provider import (
     SupabasePostgresDbEventCountsProvider,
 )
+from routes.logging_route import LoggingRoute
 
-router = APIRouter()
+router = APIRouter(route_class=LoggingRoute)
 
 
 def get_event_counts_provider() -> SupabasePostgresDbEventCountsProvider:

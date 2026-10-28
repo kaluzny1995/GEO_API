@@ -41,7 +41,7 @@ GEO_API is the data-sharing layer of the GIS data pipeline, sitting alongside [G
 ## Prerequisites
 
 - **Conda** — for environment management
-- **Supabase credentials** — same project as GEO_ETL, provided via `.env` (never committed)
+- **Supabase credentials** — same project as GEO_ETL, provided via `.env` (never committed); their setup lives in **GEO_E2E**
 
 ## Setup
 
@@ -52,13 +52,21 @@ conda env create -f environment.yml
 # Activate it
 conda activate geo_api_311
 
-# Configure Supabase credentials (same project/schema as GEO_ETL writes to)
-cp .env.example .env   # then fill in the values
+# Configure Supabase credentials — do this once in GEO_E2E (see "Configuration" below):
+# ../GEO_E2E/setup.sh writes this project's ./.env with the five SUPABASE_DB_* values
+../GEO_E2E/setup.sh
+# Manual fallback only: cp .env.example .env   # then fill in the values
 ```
 
 Packages are resolved from conda-forge (geospatial binaries) with ruff, tox and mypy installed via pip — see [`environment.yml`](environment.yml).
 
 ### Configuration
+
+**Do the Supabase setup in [GEO_E2E](../GEO_E2E) first**: run `../GEO_E2E/setup.sh`, which
+detects the credentials (or re-uses an existing `GEO_E2E/.env.local`) and mirrors the five
+`SUPABASE_DB_*` values into this project's gitignored `.env` — you configure them once, there,
+and never copy them between projects (full walkthrough in
+[GEO_E2E — Supabase metadata DB](../GEO_E2E/docs/configuration.md#supabase-metadata-db-envlocal)).
 
 Supabase credentials are read from `.env` in the project root (see `.env.example`) — the same
 five variables as GEO_ETL: `SUPABASE_DB_USER`, `SUPABASE_DB_PASSWORD`, `SUPABASE_DB_HOST`,

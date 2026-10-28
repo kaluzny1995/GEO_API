@@ -1,8 +1,9 @@
 """Supabase Postgres provider built on SQLModel's async engine (asyncpg driver)."""
 
 import logging
-from collections.abc import AsyncIterator, Sequence
-from typing import Any
+from collections.abc import AsyncIterator, Callable, Coroutine
+from functools import wraps
+from typing import Any, cast
 from uuid import uuid4
 
 import sqlalchemy
@@ -22,6 +23,39 @@ CONNECTION_ERRORS = (
     sqlalchemy.exc.InterfaceError,
     OSError,
 )
+
+
+# An async provider operation: kept as a type alias so the wrapper below does not
+# erase the decorated methods' signatures (mypy checks them against IDbProvider).
+AsyncOp = Callable[..., Coroutine[Any, Any, Any]]
+
+
+def _wrap_connection_errors(method: AsyncOp) -> AsyncOp:
+    """Run a provider operation, wrapping connection failures into SupabaseServerDownError.
+
+    The four operations carried the identical except block: log ``Supabase
+    Postgres DB server is down. Message: {e}`` to the calling endpoint's logger
+    and raise :class:`error.SupabaseServerDownError` chained from the cause.
+    The decorator keeps exactly one definition of that boundary; the operations
+    keep their bodies.
+
+    Args:
+        method: The async provider operation to wrap.
+
+    Returns:
+        The wrapped operation — same signature, same behavior on success.
+    """
+
+    @wraps(method)
+    async def wrapper(*args: Any, **kwargs: Any) -> Any:
+        try:
+            return await method(*args, **kwargs)
+        except CONNECTION_ERRORS as e:
+            log = args[0]._endpoint_logger()
+            log.error(f"Supabase Postgres DB server is down. Message: {e}")
+            raise error.SupabaseServerDownError(f"Supabase Postgres DB server is down. Message: {e}") from e
+
+    return wrapper
 
 
 class SupabasePostgresProvider(IDbProvider):
@@ -97,6 +131,7 @@ class SupabasePostgresProvider(IDbProvider):
             return f"{sql} | params={compiled.params}"
         return sql
 
+    @_wrap_connection_errors
     async def connect(self) -> None:
         """Verify that the database is reachable by running ``SELECT 1``.
 
@@ -107,12 +142,8 @@ class SupabasePostgresProvider(IDbProvider):
             SupabaseServerDownError: If the connection cannot be established.
         """
         log = self._endpoint_logger()
-        try:
-            async with self.db_engine.connect() as connection:
-                await connection.execute(sqlalchemy.text("SELECT 1"))
-        except CONNECTION_ERRORS as e:
-            log.error(f"Supabase Postgres DB server is down. Message: {e}")
-            raise error.SupabaseServerDownError(f"Supabase Postgres DB server is down. Message: {e}") from e
+        async with self.db_engine.connect() as connection:
+            await connection.execute(sqlalchemy.text("SELECT 1"))
         log.info("Connected to Supabase Postgres")
 
     def get_logger(self) -> logging.Logger:
@@ -123,6 +154,7 @@ class SupabasePostgresProvider(IDbProvider):
         """Return the async SQLAlchemy engine."""
         return self.db_engine
 
+    @_wrap_connection_errors
     async def create_table_if_not_exists(self, entity: type[SQLModel], table: str, schema: str) -> None:
         """Create a table if it does not exist.
 
@@ -135,26 +167,23 @@ class SupabasePostgresProvider(IDbProvider):
             SupabaseServerDownError: If the database cannot be reached.
         """
         log = self._endpoint_logger()
-        try:
-            async with self.db_engine.connect() as connection:
-                has_table = await connection.run_sync(
-                    lambda sync_conn: sqlalchemy.inspect(sync_conn).has_table(table_name=table, schema=schema)
+        async with self.db_engine.connect() as connection:
+            has_table = await connection.run_sync(
+                lambda sync_conn: sqlalchemy.inspect(sync_conn).has_table(table_name=table, schema=schema)
+            )
+        if has_table:
+            return
+        async with self.db_engine.begin() as connection:
+            await connection.run_sync(
+                lambda sync_conn: SQLModel.metadata.create_all(
+                    sync_conn,
+                    tables=[entity.__table__],  # type: ignore[attr-defined]
                 )
-            if has_table:
-                return
-            async with self.db_engine.begin() as connection:
-                await connection.run_sync(
-                    lambda sync_conn: SQLModel.metadata.create_all(
-                        sync_conn,
-                        tables=[entity.__table__],  # type: ignore[attr-defined]
-                    )
-                )
-            log.info(f"Table '{schema}.{table}' created.")
-        except CONNECTION_ERRORS as e:
-            log.error(f"Supabase Postgres DB server is down. Message: {e}")
-            raise error.SupabaseServerDownError(f"Supabase Postgres DB server is down. Message: {e}") from e
+            )
+        log.info(f"Table '{schema}.{table}' created.")
 
-    async def run_select_statement(self, statement: Select | SelectOfScalar) -> Sequence[Any]:
+    @_wrap_connection_errors
+    async def run_select_statement(self, statement: Select | SelectOfScalar) -> list[Any]:
         """Execute a select statement and return the results.
 
         ``Result.all()`` already materializes the rows into a fresh list, so
@@ -176,19 +205,18 @@ class SupabasePostgresProvider(IDbProvider):
             SupabaseServerDownError: If the database cannot be reached.
         """
         log = self._endpoint_logger()
-        try:
-            async with AsyncSession(self.db_engine) as session:
-                await session.connection()  # checks a connection out of the pool (connects if needed)
-                log.info("Connected to Supabase Postgres")
-                log.info(f"Executing SQL: {self._sql_text(statement)}")
-                result = await session.exec(statement)
-                rows = result.all()
-            log.info(f"Returned {len(rows)} records")
-            return rows
-        except CONNECTION_ERRORS as e:
-            log.error(f"Supabase Postgres DB server is down. Message: {e}")
-            raise error.SupabaseServerDownError(f"Supabase Postgres DB server is down. Message: {e}") from e
+        async with AsyncSession(self.db_engine) as session:
+            await session.connection()  # checks a connection out of the pool (connects if needed)
+            log.info("Connected to Supabase Postgres")
+            log.info(f"Executing SQL: {self._sql_text(statement)}")
+            result = await session.exec(statement)
+            rows = result.all()
+        log.info(f"Returned {len(rows)} records")
+        # Result.all() materialises a fresh list (SQLAlchemy docs) — the annotation
+        # above is what callers rely on; mypy only sees the wider Sequence signature.
+        return cast("list[Any]", rows)
 
+    @_wrap_connection_errors
     async def run_insert_statement(
         self, entities: list[SQLModel], batch_size: int, num_entities: int = 10000, name: str = "entities"
     ) -> None:
@@ -208,18 +236,14 @@ class SupabasePostgresProvider(IDbProvider):
             SupabaseServerDownError: If the database cannot be reached.
         """
         log = self._endpoint_logger()
-        try:
-            chunks = util.chunk_list_equal_size(entities, batch_size)
-            async with AsyncSession(self.db_engine, expire_on_commit=False) as session:
-                num_inserted = 0
-                for chunk in chunks:
-                    session.add_all(chunk)
-                    await session.commit()
-                    num_inserted += len(chunk)
-                    log.info(f"{name.capitalize()}: {num_inserted} out of {num_entities}")
-        except CONNECTION_ERRORS as e:
-            log.error(f"Supabase Postgres DB server is down. Message: {e}")
-            raise error.SupabaseServerDownError(f"Supabase Postgres DB server is down. Message: {e}") from e
+        chunks = util.chunk_list_equal_size(entities, batch_size)
+        async with AsyncSession(self.db_engine, expire_on_commit=False) as session:
+            num_inserted = 0
+            for chunk in chunks:
+                session.add_all(chunk)
+                await session.commit()
+                num_inserted += len(chunk)
+                log.info(f"{name.capitalize()}: {num_inserted} out of {num_entities}")
 
     async def close(self) -> None:
         """Dispose the engine's connection pool."""

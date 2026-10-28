@@ -113,21 +113,19 @@ class TestSetupLogger:
 class TestChunkListEqualSize:
     """Tests for :func:`util.chunk_list_equal_size`."""
 
-    def test_splits_into_equal_chunks_with_short_tail(self) -> None:
-        """Items are chunked in order, the last chunk taking the remainder."""
-        # Act
-        chunks = list(util.chunk_list_equal_size([1, 2, 3, 4, 5], 2))
-
-        # Assert
-        assert chunks == [[1, 2], [3, 4], [5]]
-
-    def test_empty_list_yields_no_chunks(self) -> None:
-        """An empty input yields nothing."""
-        assert list(util.chunk_list_equal_size([], 10)) == []
-
-    def test_batch_larger_than_list_yields_whole_list(self) -> None:
-        """A batch size above the list length yields a single chunk."""
-        assert list(util.chunk_list_equal_size([1, 2, 3], 10)) == [[1, 2, 3]]
+    @pytest.mark.parametrize(
+        ("items", "batch_size", "expected"),
+        [
+            ([1, 2, 3, 4, 5], 2, [[1, 2], [3, 4], [5]]),
+            ([], 10, []),
+            ([1, 2, 3], 10, [[1, 2, 3]]),
+        ],
+    )
+    def test_splits_into_chunks(self, items: list[int], batch_size: int, expected: list[list[int]]) -> None:
+        """Items are chunked in order with a short tail; empty input yields nothing and a
+        batch size above the list length yields a single chunk."""
+        # Act & Assert
+        assert list(util.chunk_list_equal_size(items, batch_size)) == expected
 
     def test_is_lazy_and_chunks_one_at_a_time(self) -> None:
         """No slice is taken before the first yield — only the yielded chunk is built."""

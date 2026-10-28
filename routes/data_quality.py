@@ -45,7 +45,7 @@ async def get_data_quality(
 @router.get("/data-quality/{table_name}/file-dates", response_model=list[DataQuality], tags=["data-quality"])
 async def get_data_quality_for_file_dates(
     table_name: str,
-    file_dates: Annotated[list[str], Query(min_length=1, description="Snapshot dates (YYYY-MM-DD).")],
+    file_dates: Annotated[list[str], Query(min_length=1, max_length=100, description="Snapshot dates (YYYY-MM-DD).")],
     provider: DataQualityProviderDep,
 ) -> list[DataQuality]:
     """Return the quality metrics of several ``file_date`` snapshots for a table.
@@ -62,13 +62,21 @@ async def get_data_quality_for_file_dates(
         then ``metric``.
 
     Raises:
-        HTTPException: 422 when no non-empty date remains after normalization.
+        HTTPException: 422 when no non-empty date remains after normalization,
+            or when more than 100 dates are requested (``max_length=100`` caps
+            the raw parameters; the second guard also catches the dates that
+            comma-separated parameters expand into).
     """
     dates = [date.strip() for item in file_dates for date in item.split(",") if date.strip()]
     if not dates:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="At least one non-empty file_date is required.",
+        )
+    if len(dates) > 100:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="At most 100 file_dates may be requested.",
         )
     return await provider.get_data_quality_for_file_dates(table_name, dates)
 

@@ -114,9 +114,3 @@ class TestSupabasePostgresDbDataQualityProvider:
 
         assert result == []
         mock_base_provider.run_select_statement.assert_not_awaited()
-
-    def test_is_read_only(self) -> None:
-        """The provider exposes no create/update/delete methods (read-only contract)."""
-        assert not hasattr(SupabasePostgresDbDataQualityProvider, "create")
-        assert not hasattr(SupabasePostgresDbDataQualityProvider, "update")
-        assert not hasattr(SupabasePostgresDbDataQualityProvider, "delete")

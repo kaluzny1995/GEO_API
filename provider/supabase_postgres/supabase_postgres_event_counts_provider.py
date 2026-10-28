@@ -1,6 +1,7 @@
 """Supabase Postgres provider for event count aggregations."""
 
-from typing import Any
+from collections.abc import Sequence
+from typing import Any, TypeVar
 
 from sqlalchemy import func
 from sqlmodel.sql.expression import Select
@@ -11,45 +12,43 @@ from provider.db.i_db_event_counts_provider import IDbEventCountsProvider
 from provider.db.i_db_provider import IDbProvider
 from provider.supabase_postgres.supabase_postgres_provider import get_provider
 
+EventCountT = TypeVar("EventCountT", EventCategoryCount, EventLocationCount)
 
-def _to_category_count(row: Any) -> EventCategoryCount:
-    """Convert one grouped query row into an :class:`EventCategoryCount`.
+
+def _to_count(count_type: type[EventCountT], row: Any) -> EventCountT:
+    """Convert one grouped query row into an event count model.
 
     Args:
-        row: Result row in the column order of the category ``SELECT``.
+        count_type: The model to build — its field order mirrors the column
+            order of the ``SELECT`` (grouping columns, then ``count``).
+        row: Result row in the column order of the statement.
 
     Returns:
         The parsed count row.
     """
-    source_name, subsource_name, event_category, event_subcategory, danger_rating, count = row
-    return EventCategoryCount(
-        source_name=source_name,
-        subsource_name=subsource_name,
-        event_category=event_category,
-        event_subcategory=event_subcategory,
-        danger_rating=danger_rating,
-        count=count,
-    )
+    return count_type(**dict(zip(count_type.model_fields, row, strict=True)))
 
 
-def _to_location_count(row: Any) -> EventLocationCount:
-    """Convert one grouped query row into an :class:`EventLocationCount`.
+def _counts_statement(columns: Sequence[Any], limit: int) -> Select:
+    """Build the ``SELECT ... COUNT(*) GROUP BY ... ORDER BY ... LIMIT`` statement.
+
+    Shared by both aggregations — they differ only in which five columns
+    they group by.
 
     Args:
-        row: Result row in the column order of the location ``SELECT``.
+        columns: The grouping columns, in SELECT/GROUP BY/ORDER BY order.
+        limit: Maximum number of groups returned.
 
     Returns:
-        The parsed count row.
+        The aggregate statement (the grouping columns plus ``count``).
+
+    Note:
+        Built with the ``Select(...)`` constructor instead of sqlmodel's
+        ``select()`` because select()'s overloads stop at four entities
+        (sqlmodel/sql/_expression_select_gen.py), and these aggregates group
+        by five.
     """
-    source_name, subsource_name, country_code, state_province, danger_rating, count = row
-    return EventLocationCount(
-        source_name=source_name,
-        subsource_name=subsource_name,
-        country_code=country_code,
-        state_province=state_province,
-        danger_rating=danger_rating,
-        count=count,
-    )
+    return Select(*columns, func.count().label("count")).group_by(*columns).order_by(*columns).limit(limit)
 
 
 class SupabasePostgresDbEventCountsProvider(IDbEventCountsProvider):
@@ -73,8 +72,11 @@ class SupabasePostgresDbEventCountsProvider(IDbEventCountsProvider):
         super().__init__()
         self.supabase_postgres_provider = supabase_postgres_provider or get_provider()
 
-    async def get_event_counts_by_category(self) -> list[EventCategoryCount]:
+    async def get_event_counts_by_category(self, limit: int = 100) -> list[EventCategoryCount]:
         """Return row counts grouped by source, event taxonomy and danger rating.
+
+        Args:
+            limit: Maximum number of groups returned (default 100).
 
         Returns:
             One row per distinct ``source_name`` / ``subsource_name`` /
@@ -82,39 +84,24 @@ class SupabasePostgresDbEventCountsProvider(IDbEventCountsProvider):
             combination, ordered by those five columns; an empty list when the
             table has no rows.
         """
-        # sqlmodel's select() overloads stop at four entities
-        # (sqlmodel/sql/_expression_select_gen.py), so a six-column aggregate is
-        # built with the equivalent Select(...) constructor — sqlmodel's select()
-        # does exactly that for more than one entity.
-        statement: Select = (
-            Select(
+        statement = _counts_statement(
+            (
                 union_etl.c.source_name,
                 union_etl.c.subsource_name,
                 union_etl.c.event_category,
                 union_etl.c.event_subcategory,
                 union_etl.c.danger_rating,
-                func.count().label("count"),
-            )
-            .group_by(
-                union_etl.c.source_name,
-                union_etl.c.subsource_name,
-                union_etl.c.event_category,
-                union_etl.c.event_subcategory,
-                union_etl.c.danger_rating,
-            )
-            .order_by(
-                union_etl.c.source_name,
-                union_etl.c.subsource_name,
-                union_etl.c.event_category,
-                union_etl.c.event_subcategory,
-                union_etl.c.danger_rating,
-            )
+            ),
+            limit,
         )
         rows = await self.supabase_postgres_provider.run_select_statement(statement)
-        return [_to_category_count(row) for row in rows]
+        return [_to_count(EventCategoryCount, row) for row in rows]
 
-    async def get_event_counts_by_location(self) -> list[EventLocationCount]:
+    async def get_event_counts_by_location(self, limit: int = 100) -> list[EventLocationCount]:
         """Return row counts grouped by source, location and danger rating.
+
+        Args:
+            limit: Maximum number of groups returned (default 100).
 
         Returns:
             One row per distinct ``source_name`` / ``subsource_name`` /
@@ -122,30 +109,15 @@ class SupabasePostgresDbEventCountsProvider(IDbEventCountsProvider):
             combination, ordered by those five columns; an empty list when the
             table has no rows.
         """
-        # See get_event_counts_by_category for why Select(...) is used over select().
-        statement: Select = (
-            Select(
+        statement = _counts_statement(
+            (
                 union_etl.c.source_name,
                 union_etl.c.subsource_name,
                 union_etl.c.country_code,
                 union_etl.c.state_province,
                 union_etl.c.danger_rating,
-                func.count().label("count"),
-            )
-            .group_by(
-                union_etl.c.source_name,
-                union_etl.c.subsource_name,
-                union_etl.c.country_code,
-                union_etl.c.state_province,
-                union_etl.c.danger_rating,
-            )
-            .order_by(
-                union_etl.c.source_name,
-                union_etl.c.subsource_name,
-                union_etl.c.country_code,
-                union_etl.c.state_province,
-                union_etl.c.danger_rating,
-            )
+            ),
+            limit,
         )
         rows = await self.supabase_postgres_provider.run_select_statement(statement)
-        return [_to_location_count(row) for row in rows]
+        return [_to_count(EventLocationCount, row) for row in rows]

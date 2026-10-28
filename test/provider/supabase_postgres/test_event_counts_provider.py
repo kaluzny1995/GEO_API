@@ -5,6 +5,9 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from model.event_count import EventCategoryCount, EventLocationCount
+from provider.supabase_postgres.supabase_postgres_data_quality_provider import (
+    SupabasePostgresDbDataQualityProvider,
+)
 from provider.supabase_postgres.supabase_postgres_event_counts_provider import (
     SupabasePostgresDbEventCountsProvider,
 )
@@ -43,102 +46,136 @@ def _statement_sql(mock_base_provider: MagicMock) -> str:
 class TestSupabasePostgresDbEventCountsProvider:
     """Tests for :class:`SupabasePostgresDbEventCountsProvider`."""
 
-    async def test_get_event_counts_by_category_returns_counts(
-        self, provider: SupabasePostgresDbEventCountsProvider, mock_base_provider: MagicMock
-    ) -> None:
-        """Grouped rows are parsed into EventCategoryCount models, NULLs included."""
-        result = await provider.get_event_counts_by_category()
-
-        assert result == [
-            EventCategoryCount(
-                source_name="AVALANCHE_ORG",
-                subsource_name="Bridgeport Avalanche Center",
-                event_category="avalanche",
-                event_subcategory=None,
-                danger_rating="no_rating",
-                count=39,
+    @pytest.mark.parametrize(
+        ("method", "rows", "expected"),
+        [
+            pytest.param(
+                "get_event_counts_by_category",
+                CATEGORY_ROWS,
+                [
+                    EventCategoryCount(
+                        source_name="AVALANCHE_ORG",
+                        subsource_name="Bridgeport Avalanche Center",
+                        event_category="avalanche",
+                        event_subcategory=None,
+                        danger_rating="no_rating",
+                        count=39,
+                    ),
+                    EventCategoryCount(
+                        source_name="GDACS",
+                        subsource_name=None,
+                        event_category="earthquake",
+                        event_subcategory="tsunami",
+                        danger_rating="medium",
+                        count=12,
+                    ),
+                ],
+                id="category",
             ),
-            EventCategoryCount(
-                source_name="GDACS",
-                subsource_name=None,
-                event_category="earthquake",
-                event_subcategory="tsunami",
-                danger_rating="medium",
-                count=12,
+            pytest.param(
+                "get_event_counts_by_location",
+                LOCATION_ROWS,
+                [
+                    EventLocationCount(
+                        source_name="AVALANCHE_ORG",
+                        subsource_name="Bridgeport Avalanche Center",
+                        country_code="US",
+                        state_province="CA",
+                        danger_rating="no_rating",
+                        count=39,
+                    ),
+                    EventLocationCount(
+                        source_name="GDACS",
+                        subsource_name=None,
+                        country_code="JP",
+                        state_province=None,
+                        danger_rating="medium",
+                        count=12,
+                    ),
+                ],
+                id="location",
             ),
-        ]
-        mock_base_provider.run_select_statement.assert_awaited_once()
-
-    async def test_get_event_counts_by_category_groups_by_taxonomy(
-        self, provider: SupabasePostgresDbEventCountsProvider, mock_base_provider: MagicMock
+        ],
+    )
+    async def test_get_event_counts_parses_rows(
+        self,
+        provider: SupabasePostgresDbEventCountsProvider,
+        mock_base_provider: MagicMock,
+        method: str,
+        rows: list[tuple],
+        expected: list[EventCategoryCount] | list[EventLocationCount],
     ) -> None:
-        """The category statement counts union_etl rows grouped by the five taxonomy columns."""
-        # Act
-        await provider.get_event_counts_by_category()
-
-        # Assert
-        sql = _statement_sql(mock_base_provider)
-        assert "FROM geo.union_etl" in sql
-        assert "count(*) AS count" in sql
-        group_by = sql.split("GROUP BY", 1)[1]
-        assert "geo.union_etl.source_name" in group_by
-        assert "geo.union_etl.subsource_name" in group_by
-        assert "geo.union_etl.event_category" in group_by
-        assert "geo.union_etl.event_subcategory" in group_by
-        assert "geo.union_etl.danger_rating" in group_by
-        assert "geo.union_etl.country_code" not in group_by
-        assert "geo.union_etl.state_province" not in group_by
-
-    async def test_get_event_counts_by_location_returns_counts(
-        self, provider: SupabasePostgresDbEventCountsProvider, mock_base_provider: MagicMock
-    ) -> None:
-        """Grouped rows are parsed into EventLocationCount models, NULLs included."""
+        """Grouped rows are parsed into the matching count model, NULLs included."""
         # Arrange
-        mock_base_provider.run_select_statement = AsyncMock(return_value=list(LOCATION_ROWS))
+        mock_base_provider.run_select_statement = AsyncMock(return_value=list(rows))
 
         # Act
-        result = await provider.get_event_counts_by_location()
+        result = await getattr(provider, method)()
 
         # Assert
-        assert result == [
-            EventLocationCount(
-                source_name="AVALANCHE_ORG",
-                subsource_name="Bridgeport Avalanche Center",
-                country_code="US",
-                state_province="CA",
-                danger_rating="no_rating",
-                count=39,
-            ),
-            EventLocationCount(
-                source_name="GDACS",
-                subsource_name=None,
-                country_code="JP",
-                state_province=None,
-                danger_rating="medium",
-                count=12,
-            ),
-        ]
+        assert result == expected
         mock_base_provider.run_select_statement.assert_awaited_once()
 
-    async def test_get_event_counts_by_location_groups_by_location(
-        self, provider: SupabasePostgresDbEventCountsProvider, mock_base_provider: MagicMock
+    @pytest.mark.parametrize(
+        ("method", "grouped_columns", "absent_columns"),
+        [
+            pytest.param(
+                "get_event_counts_by_category",
+                [
+                    "geo.union_etl.source_name",
+                    "geo.union_etl.subsource_name",
+                    "geo.union_etl.event_category",
+                    "geo.union_etl.event_subcategory",
+                    "geo.union_etl.danger_rating",
+                ],
+                ["geo.union_etl.country_code", "geo.union_etl.state_province"],
+                id="category",
+            ),
+            pytest.param(
+                "get_event_counts_by_location",
+                [
+                    "geo.union_etl.source_name",
+                    "geo.union_etl.subsource_name",
+                    "geo.union_etl.country_code",
+                    "geo.union_etl.state_province",
+                    "geo.union_etl.danger_rating",
+                ],
+                ["geo.union_etl.event_category", "geo.union_etl.event_subcategory"],
+                id="location",
+            ),
+        ],
+    )
+    async def test_statement_groups_by_the_five_columns(
+        self,
+        provider: SupabasePostgresDbEventCountsProvider,
+        mock_base_provider: MagicMock,
+        method: str,
+        grouped_columns: list[str],
+        absent_columns: list[str],
     ) -> None:
-        """The location statement counts union_etl rows grouped by the five location columns."""
+        """Each statement counts union_etl rows grouped by its own five columns."""
         # Act
-        await provider.get_event_counts_by_location()
+        await getattr(provider, method)()
 
         # Assert
         sql = _statement_sql(mock_base_provider)
         assert "FROM geo.union_etl" in sql
         assert "count(*) AS count" in sql
         group_by = sql.split("GROUP BY", 1)[1]
-        assert "geo.union_etl.source_name" in group_by
-        assert "geo.union_etl.subsource_name" in group_by
-        assert "geo.union_etl.country_code" in group_by
-        assert "geo.union_etl.state_province" in group_by
-        assert "geo.union_etl.danger_rating" in group_by
-        assert "geo.union_etl.event_category" not in group_by
-        assert "geo.union_etl.event_subcategory" not in group_by
+        for column in grouped_columns:
+            assert column in group_by, column
+        for column in absent_columns:
+            assert column not in group_by, column
+
+    async def test_statement_carries_the_limit(
+        self, provider: SupabasePostgresDbEventCountsProvider, mock_base_provider: MagicMock
+    ) -> None:
+        """The shared statement applies the requested LIMIT to the grouped rows."""
+        # Act
+        await provider.get_event_counts_by_category(limit=7)
+
+        # Assert
+        assert "LIMIT" in _statement_sql(mock_base_provider)
 
     async def test_get_event_counts_returns_empty_list_when_no_rows(self, mock_base_provider: MagicMock) -> None:
         """An empty table yields an empty list, not an error."""
@@ -154,8 +191,13 @@ class TestSupabasePostgresDbEventCountsProvider:
         assert category_counts == []
         assert location_counts == []
 
-    def test_is_read_only(self) -> None:
-        """The provider exposes no create/update/delete methods (read-only contract)."""
-        assert not hasattr(SupabasePostgresDbEventCountsProvider, "create")
-        assert not hasattr(SupabasePostgresDbEventCountsProvider, "update")
-        assert not hasattr(SupabasePostgresDbEventCountsProvider, "delete")
+
+@pytest.mark.parametrize(
+    "provider_class",
+    [SupabasePostgresDbEventCountsProvider, SupabasePostgresDbDataQualityProvider],
+)
+def test_is_read_only(provider_class: type) -> None:
+    """Neither read-only provider exposes create/update/delete methods (read-only contract)."""
+    assert not hasattr(provider_class, "create")
+    assert not hasattr(provider_class, "update")
+    assert not hasattr(provider_class, "delete")

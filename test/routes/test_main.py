@@ -41,36 +41,36 @@ def test_hello_endpoints_return_200(client: TestClient, endpoint_url: str, expec
     assert message.code == status.HTTP_200_OK
 
 
-def test_health_returns_200_when_database_is_reachable(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Health returns 200 when the provider connects successfully."""
+@pytest.mark.parametrize(
+    ("connect_effect", "status_code", "title"),
+    [
+        (None, status.HTTP_200_OK, "Healthy"),
+        (
+            error.SupabaseServerDownError("Supabase Postgres DB server is down."),
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "Service Unavailable.",
+        ),
+    ],
+)
+def test_health_reflects_database_reachability(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    connect_effect: Exception | None,
+    status_code: int,
+    title: str,
+) -> None:
+    """Health returns 200 when the provider connects and 503 when it cannot."""
     # Arrange
     mock_provider = MagicMock()
-    mock_provider.connect = AsyncMock()
+    mock_provider.connect = AsyncMock(side_effect=connect_effect)
     monkeypatch.setattr("routes.main.get_provider", lambda: mock_provider)
 
     # Act
     response = client.get("/health")
 
     # Assert
-    assert response.status_code == status.HTTP_200_OK
+    assert response.status_code == status_code
     message = ResponseMessage(**response.json())
-    assert message.title == "Healthy"
-    assert message.code == status.HTTP_200_OK
+    assert message.title == title
+    assert message.code == status_code
     mock_provider.connect.assert_awaited_once()
-
-
-def test_health_returns_503_when_database_is_down(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Health returns 503 when the provider raises SupabaseServerDownError."""
-    # Arrange
-    mock_provider = MagicMock()
-    mock_provider.connect = AsyncMock(side_effect=error.SupabaseServerDownError("Supabase Postgres DB server is down."))
-    monkeypatch.setattr("routes.main.get_provider", lambda: mock_provider)
-
-    # Act
-    response = client.get("/health")
-
-    # Assert
-    assert response.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
-    message = ResponseMessage(**response.json())
-    assert message.title == "Service Unavailable."
-    assert message.code == status.HTTP_503_SERVICE_UNAVAILABLE

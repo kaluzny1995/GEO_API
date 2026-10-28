@@ -97,63 +97,77 @@ class TestGetDataQuality:
 class TestGetDataQualityForFileDates:
     """Tests for the many-file-dates data quality endpoint."""
 
-    def test_file_dates_endpoint_returns_200_with_metrics(self, client: TestClient, mock_provider: MagicMock) -> None:
-        """Repeated file_dates params are forwarded as a date list."""
+    @pytest.mark.parametrize(
+        ("params", "expected_dates"),
+        [
+            pytest.param({"file_dates": ["2026-09-19", "2026-09-20"]}, ["2026-09-19", "2026-09-20"], id="repeated"),
+            pytest.param({"file_dates": "2026-09-19,2026-09-20"}, ["2026-09-19", "2026-09-20"], id="comma-separated"),
+            pytest.param({"file_dates": ["2026-09-20"]}, ["2026-09-20"], id="single"),
+        ],
+    )
+    def test_file_dates_endpoint_forwards_dates(
+        self,
+        client: TestClient,
+        mock_provider: MagicMock,
+        params: dict[str, str | list[str]],
+        expected_dates: list[str],
+    ) -> None:
+        """Repeated and comma-separated file_dates both reach the provider as a date list."""
         # Act
-        response = client.get(
-            "/data-quality/usgs_earthquake/file-dates",
-            params={"file_dates": ["2026-09-19", "2026-09-20"]},
-        )
+        response = client.get("/data-quality/usgs_earthquake/file-dates", params=params)
 
         # Assert
         assert response.status_code == status.HTTP_200_OK
         body = response.json()
         assert len(body) == 2
         assert body[0]["metric"] == "bad_row_pct"
-        mock_provider.get_data_quality_for_file_dates.assert_awaited_once_with(
-            "usgs_earthquake", ["2026-09-19", "2026-09-20"]
-        )
+        mock_provider.get_data_quality_for_file_dates.assert_awaited_once_with("usgs_earthquake", expected_dates)
         mock_provider.get_data_quality.assert_not_awaited()
 
-    def test_file_dates_endpoint_accepts_comma_separated_dates(
-        self, client: TestClient, mock_provider: MagicMock
+    @pytest.mark.parametrize(
+        "request_url",
+        [
+            pytest.param("/data-quality/usgs_earthquake/file-dates", id="missing"),
+            pytest.param("/data-quality/usgs_earthquake/file-dates?file_dates=", id="empty"),
+        ],
+    )
+    def test_file_dates_endpoint_returns_422_when_dates_missing_or_empty(
+        self, client: TestClient, mock_provider: MagicMock, request_url: str
     ) -> None:
-        """A single comma-separated file_dates param is split into a date list."""
+        """Missing or empty file_dates fail validation and never call the provider."""
         # Act
-        response = client.get("/data-quality/usgs_earthquake/file-dates?file_dates=2026-09-19,2026-09-20")
-
-        # Assert
-        assert response.status_code == status.HTTP_200_OK
-        mock_provider.get_data_quality_for_file_dates.assert_awaited_once_with(
-            "usgs_earthquake", ["2026-09-19", "2026-09-20"]
-        )
-
-    def test_file_dates_endpoint_supports_single_date(self, client: TestClient, mock_provider: MagicMock) -> None:
-        """A single file_dates value still routes through the many-dates method."""
-        # Act
-        response = client.get("/data-quality/usgs_earthquake/file-dates", params={"file_dates": ["2026-09-20"]})
-
-        # Assert
-        assert response.status_code == status.HTTP_200_OK
-        mock_provider.get_data_quality_for_file_dates.assert_awaited_once_with("usgs_earthquake", ["2026-09-20"])
-
-    def test_file_dates_endpoint_returns_422_when_dates_missing(
-        self, client: TestClient, mock_provider: MagicMock
-    ) -> None:
-        """Missing file_dates fails validation and never calls the provider."""
-        # Act
-        response = client.get("/data-quality/usgs_earthquake/file-dates")
+        response = client.get(request_url)
 
         # Assert
         assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
         mock_provider.get_data_quality_for_file_dates.assert_not_awaited()
 
-    def test_file_dates_endpoint_returns_422_when_dates_empty(
+    def test_file_dates_endpoint_returns_422_above_the_raw_limit(
         self, client: TestClient, mock_provider: MagicMock
     ) -> None:
-        """An empty file_dates value is rejected by the endpoint's normalization guard."""
-        # Act — empty CSV yields an empty list after normalization, rejected as 422
-        response = client.get("/data-quality/usgs_earthquake/file-dates?file_dates=")
+        """More than 100 raw file_dates parameters are rejected by Query(max_length=100)."""
+        # Act
+        response = client.get(
+            "/data-quality/usgs_earthquake/file-dates",
+            params={"file_dates": [f"2026-09-{(i % 28) + 1:02d}" for i in range(101)]},
+        )
 
         # Assert
         assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+        mock_provider.get_data_quality_for_file_dates.assert_not_awaited()
+
+    def test_file_dates_endpoint_returns_422_above_the_normalized_limit(
+        self, client: TestClient, mock_provider: MagicMock
+    ) -> None:
+        """Comma expansion cannot push the request past 100 dates: the post-normalization
+        guard rejects it even though the raw parameter count stays within the limit."""
+        # Act
+        many_dates = ",".join(f"2026-09-{(i % 28) + 1:02d}" for i in range(150))
+        response = client.get(
+            "/data-quality/usgs_earthquake/file-dates",
+            params={"file_dates": [many_dates]},
+        )
+
+        # Assert
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+        mock_provider.get_data_quality_for_file_dates.assert_not_awaited()

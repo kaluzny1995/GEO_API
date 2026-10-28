@@ -45,7 +45,7 @@ class SupabasePostgresDbDataQualityProvider(IDbDataQualityProvider):
             .order_by(DataQuality.metric)
         )
         rows = await self.supabase_postgres_provider.run_select_statement(statement)
-        return list(rows)
+        return rows
 
     async def get_data_quality_for_file_dates(self, table_name: str, file_dates: list[str]) -> list[DataQuality]:
         """Return the data quality metrics for a table across many file_dates.
@@ -67,4 +67,4 @@ class SupabasePostgresDbDataQualityProvider(IDbDataQualityProvider):
             .order_by(DataQuality.file_date, DataQuality.metric)
         )
         rows = await self.supabase_postgres_provider.run_select_statement(statement)
-        return list(rows)
+        return rows

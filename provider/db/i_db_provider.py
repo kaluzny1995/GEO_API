@@ -2,7 +2,6 @@
 
 import logging
 from abc import ABC, abstractmethod
-from collections.abc import Sequence
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncEngine
@@ -61,7 +60,7 @@ class IDbProvider(ABC):
         pass
 
     @abstractmethod
-    async def run_select_statement(self, statement: Select | SelectOfScalar) -> Sequence[Any]:
+    async def run_select_statement(self, statement: Select | SelectOfScalar) -> list[Any]:
         """Execute a select statement and return the results.
 
         Args:

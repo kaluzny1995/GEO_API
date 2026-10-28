@@ -2,7 +2,7 @@
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 
 from model.event_count import EventCategoryCount, EventLocationCount
 from provider.supabase_postgres.supabase_postgres_event_counts_provider import (
@@ -28,30 +28,42 @@ EventCountsProviderDep = Annotated[SupabasePostgresDbEventCountsProvider, Depend
 
 
 @router.get("/event-counts/category", response_model=list[EventCategoryCount], tags=["event-counts"])
-async def get_event_counts_by_category(provider: EventCountsProviderDep) -> list[EventCategoryCount]:
+async def get_event_counts_by_category(
+    provider: EventCountsProviderDep,
+    limit: Annotated[int, Query(ge=1, le=1000, description="Maximum number of groups to return.")] = 100,
+) -> list[EventCategoryCount]:
     """Return ``geo.union_etl`` row counts grouped by event taxonomy.
 
     Every row of the stacked event table is grouped by ``source_name``,
     ``subsource_name``, ``event_category``, ``event_subcategory`` and
     ``danger_rating``; ``count`` is the number of rows in the group.
 
+    Args:
+        limit: Maximum number of groups returned (1-1000, default 100).
+
     Returns:
         One row per distinct group ordered by the five grouping columns;
         empty when the table has no rows.
     """
-    return await provider.get_event_counts_by_category()
+    return await provider.get_event_counts_by_category(limit=limit)
 
 
 @router.get("/event-counts/location", response_model=list[EventLocationCount], tags=["event-counts"])
-async def get_event_counts_by_location(provider: EventCountsProviderDep) -> list[EventLocationCount]:
+async def get_event_counts_by_location(
+    provider: EventCountsProviderDep,
+    limit: Annotated[int, Query(ge=1, le=1000, description="Maximum number of groups to return.")] = 100,
+) -> list[EventLocationCount]:
     """Return ``geo.union_etl`` row counts grouped by location.
 
     Every row of the stacked event table is grouped by ``source_name``,
     ``subsource_name``, ``country_code``, ``state_province`` and
     ``danger_rating``; ``count`` is the number of rows in the group.
 
+    Args:
+        limit: Maximum number of groups returned (1-1000, default 100).
+
     Returns:
         One row per distinct group ordered by the five grouping columns;
         empty when the table has no rows.
     """
-    return await provider.get_event_counts_by_location()
+    return await provider.get_event_counts_by_location(limit=limit)

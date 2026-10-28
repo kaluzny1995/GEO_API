@@ -67,89 +67,90 @@ def client(mock_provider: MagicMock) -> Generator[TestClient, None, None]:
     app.dependency_overrides.clear()
 
 
-class TestGetEventCountsByCategory:
-    """Tests for the event taxonomy count endpoint."""
+@pytest.mark.parametrize(
+    ("path", "method", "other_method", "rows", "expected_fields"),
+    [
+        pytest.param(
+            "/event-counts/category",
+            "get_event_counts_by_category",
+            "get_event_counts_by_location",
+            CATEGORY_ROWS,
+            {"source_name", "subsource_name", "event_category", "event_subcategory", "danger_rating", "count"},
+            id="category",
+        ),
+        pytest.param(
+            "/event-counts/location",
+            "get_event_counts_by_location",
+            "get_event_counts_by_category",
+            LOCATION_ROWS,
+            {"source_name", "subsource_name", "country_code", "state_province", "danger_rating", "count"},
+            id="location",
+        ),
+    ],
+)
+def test_endpoint_returns_200_with_counts(
+    client: TestClient,
+    mock_provider: MagicMock,
+    path: str,
+    method: str,
+    other_method: str,
+    rows: list[EventCategoryCount] | list[EventLocationCount],
+    expected_fields: set[str],
+) -> None:
+    """Both count endpoints return their grouped rows with the exact response fields."""
+    # Act
+    response = client.get(path)
 
-    def test_category_endpoint_returns_200_with_counts(self, client: TestClient, mock_provider: MagicMock) -> None:
-        """Category endpoint returns 200 with the grouped count rows."""
-        # Act
-        response = client.get("/event-counts/category")
-
-        # Assert
-        assert response.status_code == status.HTTP_200_OK
-        body = response.json()
-        assert len(body) == 2
-        assert set(body[0]) == {
-            "source_name",
-            "subsource_name",
-            "event_category",
-            "event_subcategory",
-            "danger_rating",
-            "count",
-        }
-        assert body[0]["source_name"] == "AVALANCHE_ORG"
-        assert body[0]["event_category"] == "avalanche"
-        assert body[0]["event_subcategory"] is None
-        assert body[0]["danger_rating"] == "no_rating"
-        assert body[0]["count"] == 39
-        assert body[1]["event_subcategory"] == "tsunami"
-        mock_provider.get_event_counts_by_category.assert_awaited_once_with()
-        mock_provider.get_event_counts_by_location.assert_not_awaited()
-
-    def test_category_endpoint_returns_empty_list_when_no_groups(
-        self, client: TestClient, mock_provider: MagicMock
-    ) -> None:
-        """An empty provider result is returned as an empty JSON list."""
-        # Arrange
-        mock_provider.get_event_counts_by_category = AsyncMock(return_value=[])
-
-        # Act
-        response = client.get("/event-counts/category")
-
-        # Assert
-        assert response.status_code == status.HTTP_200_OK
-        assert response.json() == []
+    # Assert
+    assert response.status_code == status.HTTP_200_OK
+    body = response.json()
+    assert len(body) == 2
+    assert set(body[0]) == expected_fields
+    assert body[0] == rows[0].model_dump()
+    assert body[1] == rows[1].model_dump()
+    getattr(mock_provider, method).assert_awaited_once_with(limit=100)
+    getattr(mock_provider, other_method).assert_not_awaited()
 
 
-class TestGetEventCountsByLocation:
-    """Tests for the location count endpoint."""
+@pytest.mark.parametrize(
+    ("path", "method"),
+    [
+        pytest.param("/event-counts/category", "get_event_counts_by_category", id="category"),
+        pytest.param("/event-counts/location", "get_event_counts_by_location", id="location"),
+    ],
+)
+def test_endpoint_returns_empty_list_when_no_groups(
+    client: TestClient, mock_provider: MagicMock, path: str, method: str
+) -> None:
+    """An empty provider result is returned as an empty JSON list."""
+    # Arrange
+    getattr(mock_provider, method).return_value = []
 
-    def test_location_endpoint_returns_200_with_counts(self, client: TestClient, mock_provider: MagicMock) -> None:
-        """Location endpoint returns 200 with the grouped count rows."""
-        # Act
-        response = client.get("/event-counts/location")
+    # Act
+    response = client.get(path)
 
-        # Assert
-        assert response.status_code == status.HTTP_200_OK
-        body = response.json()
-        assert len(body) == 2
-        assert set(body[0]) == {
-            "source_name",
-            "subsource_name",
-            "country_code",
-            "state_province",
-            "danger_rating",
-            "count",
-        }
-        assert body[0]["source_name"] == "AVALANCHE_ORG"
-        assert body[0]["country_code"] == "US"
-        assert body[0]["state_province"] == "CA"
-        assert body[0]["danger_rating"] == "no_rating"
-        assert body[0]["count"] == 39
-        assert body[1]["state_province"] is None
-        mock_provider.get_event_counts_by_location.assert_awaited_once_with()
-        mock_provider.get_event_counts_by_category.assert_not_awaited()
+    # Assert
+    assert response.status_code == status.HTTP_200_OK
+    assert response.json() == []
 
-    def test_location_endpoint_returns_empty_list_when_no_groups(
-        self, client: TestClient, mock_provider: MagicMock
-    ) -> None:
-        """An empty provider result is returned as an empty JSON list."""
-        # Arrange
-        mock_provider.get_event_counts_by_location = AsyncMock(return_value=[])
 
-        # Act
-        response = client.get("/event-counts/location")
+@pytest.mark.parametrize("limit", [1, 5, 1000])
+def test_endpoint_forwards_an_in_range_limit(client: TestClient, mock_provider: MagicMock, limit: int) -> None:
+    """A limit within 1..1000 reaches the provider unchanged."""
+    # Act
+    response = client.get("/event-counts/category", params={"limit": limit})
 
-        # Assert
-        assert response.status_code == status.HTTP_200_OK
-        assert response.json() == []
+    # Assert
+    assert response.status_code == status.HTTP_200_OK
+    mock_provider.get_event_counts_by_category.assert_awaited_once_with(limit=limit)
+
+
+@pytest.mark.parametrize("limit", [0, -5, 1001])
+def test_endpoint_rejects_an_out_of_range_limit(client: TestClient, mock_provider: MagicMock, limit: int) -> None:
+    """Limits outside 1..1000 fail validation (422) and never call the provider."""
+    # Act
+    response = client.get("/event-counts/location", params={"limit": limit})
+
+    # Assert
+    assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+    mock_provider.get_event_counts_by_location.assert_not_awaited()

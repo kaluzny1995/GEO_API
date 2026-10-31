@@ -17,7 +17,7 @@ GEO_API is the data-sharing layer of the GIS data pipeline, sitting alongside [G
 - **Typed contracts** — Pydantic v2 request/response models (`DataQuality`, `EventCategoryCount`, `EventLocationCount`, `ResponseMessage`)
 - **Predictable memory** — one materialization per stage (fetch → convert → serialize), no duplicate result copies, lazy batching, idempotent logging — profiled with `tracemalloc` (see [Memory characteristics](#memory-characteristics))
 - **Per-endpoint logging** — one timestamped log file per endpoint (`logs/<tag>/<handler>_<ts>.log`, file + stdout), request start/finish with status and timing, executed SQL with row counts, tracebacks at the endpoint boundary (see [Logging](#logging))
-- **Dev tooling** — ruff (lint/format), mypy (type checking), tox (isolated checks: lint, typecheck, py311, warnings)
+- **Dev tooling** — ruff (lint/format), mypy (type checking), tox (isolated checks: lint, format, format-fix, typecheck, py311, warnings)
 
 ## Tech Stack
 
@@ -27,16 +27,21 @@ GEO_API is the data-sharing layer of the GIS data pipeline, sitting alongside [G
 | Web framework  | FastAPI                                       |
 | Server         | Uvicorn                                       |
 | Validation     | Pydantic >= 2.0.0                             |
-| DataFrames     | pandas >= 2.0                                 |
-| Geospatial     | GeoPandas >= 0.14 (Shapely, pyproj, pyogrio)  |
 | Database       | PostgreSQL (Supabase) via SQLModel + SQLAlchemy 2.0 async |
 | DB driver      | asyncpg >= 0.29                               |
-| HTTP client    | httpx >= 0.27                                 |
-| Testing        | pytest >= 7.0.0                               |
+| HTTP client    | httpx >= 0.27 (via Starlette's `TestClient` in tests only — no source file imports it directly) |
+| Testing        | pytest >= 7.0.0, pytest-asyncio >= 0.24       |
 | Lint / format  | ruff >= 0.6                                   |
 | Type checking  | mypy >= 1.10                                  |
 | Check runner   | tox >= 4.0                                    |
 | Environment    | Conda — `geo_api_311`                         |
+
+> **Note:** `environment.yml` still pins `pandas >= 2.0` and `geopandas >= 0.14`, but **no file in
+> this repo imports either** — they are inherited from the shared `GeographicData` conda stack
+> (used by GEO_Download / GEO_ETL), not by this API, and are deliberately not listed in the Tech
+> Stack above. Drop them from `environment.yml` too if you want a leaner `geo_api_311` env.
+> `python-multipart >= 0.0.9` is likewise unused today; it is only required if form-data
+> endpoints are added later.
 
 ## Prerequisites
 
@@ -74,6 +79,23 @@ five variables as GEO_ETL: `SUPABASE_DB_USER`, `SUPABASE_DB_PASSWORD`, `SUPABASE
 override the file. The connection URL enables `ssl=require` and PgBouncer-safe prepared
 statements automatically.
 
+#### `config.json` / `metadata.json`
+
+`config.json` feeds two pydantic models:
+
+| Key | Model | Purpose |
+| --- | ----- | ------- |
+| `app_run.host` / `.port` / `.reload` | `AppRunConfig` (`model/config/app_run_config.py`) | uvicorn binding — used by `run.py` |
+| `app_run.log_level` | `AppRunConfig` | uvicorn log level (`"info"`) |
+| `cors_middleware.allow_origins` | `CORSMiddlewareConfig` (`model/config/cors_middleware_config.py`) | allowed origins (`["*"]`) |
+| `cors_middleware.allow_credentials` | `CORSMiddlewareConfig` | credentials flag (`false`) |
+| `cors_middleware.allow_methods` | `CORSMiddlewareConfig` | allowed methods (`["*"]`) |
+| `cors_middleware.allow_headers` | `CORSMiddlewareConfig` | allowed headers (`["*"]`) |
+
+`metadata.json` is parsed by `AppMetadataConfig` (`model/config/app_metadata_config.py`) into
+FastAPI's OpenAPI kwargs: `title`, `description` (a **list** of strings joined into one),
+`summary` and `version`.
+
 ### Database access
 
 ```python
@@ -106,6 +128,10 @@ vary by a few percent):
 | `GET /event-counts/location` | 905 groups | ~1.4 MiB |
 | `GET /data-quality/{table_name}` | 175 metrics | ~0.53 MiB |
 
+The two event-count rows above were measured with `?limit=1000` (the table holds 124 and 905
+groups respectively); the default `?limit=100` returns at most 100 groups and so allocates
+proportionally less.
+
 Three per-stage optimizations — their impact grows with data volume and process lifetime, so it
 is invisible at today's sizes:
 
@@ -128,7 +154,7 @@ aggregates return at most ~10³ rows. If raw `geo.union_etl` row endpoints are a
 ```bash
 conda activate geo_api_311
 
-# Entry point (host/port/reload from config.json → app_run)
+# Entry point (host/port/reload/log_level from config.json → app_run)
 python run.py
 
 # Or directly:
@@ -146,17 +172,26 @@ Swagger UI: http://127.0.0.1:8000/docs — OpenAPI schema is generated automatic
 | GET      | `/health`                                | Verifies the Supabase Postgres connection — 200 or 503                              |
 | GET      | `/data-quality/{table_name}`             | Overall quality snapshot (`file_date = "overall"`) — list of metrics                |
 | GET      | `/data-quality/{table_name}/{file_date}` | Quality metrics of one `YYYY-MM-DD` snapshot — list of metrics                      |
-| GET      | `/data-quality/{table_name}/file-dates`  | Quality metrics of many snapshots — `?file_dates=...` (repeated or comma-separated) |
-| GET      | `/event-counts/category`                 | `geo.union_etl` row counts grouped by source, event taxonomy and danger rating      |
-| GET      | `/event-counts/location`                 | `geo.union_etl` row counts grouped by source, location and danger rating            |
+| GET      | `/data-quality/{table_name}/file-dates`  | Quality metrics of many snapshots — required `?file_dates=...` (repeated or comma-separated), max 100 |
+| GET      | `/event-counts/category`                 | `geo.union_etl` row counts grouped by source, event taxonomy and danger rating — optional `?limit=1..1000` (default 100) |
+| GET      | `/event-counts/location`                 | `geo.union_etl` row counts grouped by source, location and danger rating — optional `?limit=1..1000` (default 100) |
 
 Data quality rows come from `geo.data_quality` (written by GEO_ETL's DATA_QUALITY job — metric
 families documented in [GEO_ETL docs](../GEO_ETL/docs/data-quality-metrics.md)). The endpoint is
 read-only; an empty list means no metrics for that table/date.
 
+Each data-quality row is a `DataQuality` model (`model/data_quality.py`) with the fields
+`table_name`, `file_date`, `metric`, `value` (float) and `computed_at` (ISO-8601 datetime);
+the composite primary key is `(table_name, file_date, metric)`. On the `/{table_name}`
+overall snapshot the special `file_date` value `"overall"` carries the cross-date aggregate.
+
 Event counts aggregate the stacked event table `geo.union_etl` (the canonical 21 columns of
-[GEO_ETL docs](../GEO_ETL/docs/data-tables.md)) with `SELECT … COUNT(*) … GROUP BY`; no filters
-are applied, so the `count` values of either endpoint always sum to the full table size:
+[GEO_ETL docs](../GEO_ETL/docs/data-tables.md)) with `SELECT … COUNT(*) … GROUP BY`. The only
+filter is the optional `limit` query parameter (`int`, 1–1000, default **100**) applied to the
+*number of groups returned* — it does not filter rows before aggregation, so each `count` is
+always the full size of its group. With the default `limit` the groups are truncated to the
+first 100 (by the ordering below), so the returned `count` values do **not** sum to the table
+size unless you pass `?limit=1000` or the group count is under the limit:
 
 | Endpoint                  | Grouped by (→ response fields)                                                                           | `count` field                                   |
 | ------------------------- | -------------------------------------------------------------------------------------------------------- | ----------------------------------------------- |
@@ -173,13 +208,22 @@ in [GEO_ETL's single-ETL job](../GEO_ETL/docs/etl_jobs/single-etl.md).
 by the global handler in `error_handlers.py`. The engine's connection pool is disposed on
 shutdown via the FastAPI lifespan (`dispose_provider`).
 
+### Error responses
+
+| Status | When | Body |
+| ------ | ---- | ---- |
+| 422 | `GET /data-quality/{table_name}/file-dates` called with no `file_dates`, or only empty values | `"At least one non-empty file_date is required."` |
+| 422 | `GET /data-quality/{table_name}/file-dates` with more than 100 dates | `"At most 100 file_dates may be requested."` |
+| 422 | `GET /event-counts/*` with `limit` outside 1–1000 | FastAPI/pydantic validation error |
+| 503 | `SupabaseServerDownError` (connection/interface/OSError from asyncpg) anywhere in the request | `ResponseMessage` — `title`, `description`, `code` |
+
 ### Logging
 
 Every endpoint writes to its own log file, following the GEO_ETL / GEO_Download conventions
 (`%(asctime)s %(levelname)s %(message)s`, file + stdout mirror via `util.setup_logger`):
 
 - **Path:** `logs/<tag>/<handler>_<first-request timestamp>.log` — e.g.
-  `logs/event_counts/get_event_counts_by_category_2026-10-20T14-03-11.123456.log`, where the
+  `logs/event_counts/get_event_counts_by_category_2026-10-20T20:08:34.334520.log`, where the
   directory is the router tag (`main`, `data_quality`, `event_counts`).
 - **One file per endpoint per application run**, created lazily on the endpoint's first request
   and appended to for every subsequent request — no empty files.
@@ -207,8 +251,8 @@ Example — the full life of one request in `logs/event_counts/get_event_counts_
 ```text
 2026-10-20 20:08:34,335 INFO GET /event-counts/category started
 2026-10-20 20:08:34,338 INFO Connected to Supabase Postgres
-2026-10-20 20:08:34,339 INFO Executing SQL: SELECT geo.union_etl.source_name, … count(*) AS count FROM geo.union_etl GROUP BY … ORDER BY …
-2026-10-20 20:08:35,093 INFO Returned 124 records
+2026-10-20 20:08:34,339 INFO Executing SQL: SELECT geo.union_etl.source_name, … count(*) AS count FROM geo.union_etl GROUP BY … ORDER BY … LIMIT 100
+2026-10-20 20:08:35,093 INFO Returned 100 records
 2026-10-20 20:08:35,094 INFO GET /event-counts/category finished with 200 in 759.3 ms
 ```
 
@@ -225,10 +269,23 @@ Or run everything in isolated environments (like GEO_ETL):
 
 ```bash
 tox                    # lint + py311 (default envlist)
+tox -e lint            # ruff check
 tox -e typecheck       # mypy
-tox -e format          # format check
+tox -e format          # ruff format --check
+tox -e format-fix      # ruff format (writes the changes)
 tox -e warnings        # tests with warnings-as-errors
 ```
+
+`py311` runs the full pytest suite (87 tests) in an isolated virtualenv.
+
+## Related Projects
+
+GEO_API is one layer of the GIS data pipeline. The five projects sit as siblings under `GeographicData/`:
+
+- **[GEO_Download](../GEO_Download)** — fetches the raw data from public geospatial APIs into dated CSVs.
+- **[GEO_ETL](../GEO_ETL)** — PySpark ETL that loads those CSVs into Supabase and writes the `geo.data_quality` / `geo.union_etl` tables this API reads.
+- **[GEO_E2E](../GEO_E2E)** — Airflow orchestrator that schedules the download and the ETL; its `./setup.sh` also writes this project's `.env` with the shared `SUPABASE_DB_*` credentials.
+- **[GEO_APP](../GEO_APP)** — React dashboard that renders what this API serves.
 
 ## Project structure
 
@@ -262,14 +319,15 @@ GEO_API/
 │   ├── conftest.py                # autouse fixture: endpoint logs → tmp_path
 │   ├── model/config/              # config tests (no network)
 │   ├── provider/supabase_postgres/  # provider tests (base provider mocked)
-│   └── routes/                    # endpoint tests (DB mocked)
+│   ├── routes/                    # endpoint tests (DB mocked)
+│   └── test_util.py               # util.py tests — logger idempotency, chunking
 ├── main.py                        # FastAPI app (uvicorn main:app)
 ├── run.py                         # uvicorn entry point (config.json → app_run)
 ├── error_handlers.py              # SupabaseServerDownError → 503
 ├── error.py                       # SupabaseServerDownError
 ├── util.py                        # logger + batch helpers
-├── metadata.json                  # FastAPI metadata (title, description, version)
-├── config.json                    # app_run + cors_middleware settings
+├── metadata.json                  # FastAPI metadata (title, description, summary, version)
+├── config.json                    # app_run (host, port, reload, log_level) + cors_middleware (allow_origins, allow_credentials, allow_methods, allow_headers)
 ├── environment.yml                # conda environment: geo_api_311 (Python 3.11)
 ├── pyproject.toml                 # ruff / pytest / mypy config
 ├── tox.ini                        # lint, format, typecheck, py311, warnings

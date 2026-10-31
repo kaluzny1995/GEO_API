@@ -68,3 +68,26 @@ class SupabasePostgresDbDataQualityProvider(IDbDataQualityProvider):
         )
         rows = await self.supabase_postgres_provider.run_select_statement(statement)
         return rows
+
+    async def get_file_dates(self, table_name: str) -> list[str]:
+        """Return every snapshot date recorded for a table.
+
+        A ``SELECT DISTINCT file_date`` over ``geo.data_quality`` — the
+        authoritative list, so a client never has to guess a window.
+
+        Args:
+            table_name: Measured table name.
+
+        Returns:
+            The distinct ``file_date`` values in ascending order (``"overall"``
+            sorts last because it is not a date); empty when the table has no
+            metrics.
+        """
+        statement = (
+            select(DataQuality.file_date)
+            .where(DataQuality.table_name == table_name)
+            .distinct()
+            .order_by(DataQuality.file_date)
+        )
+        rows = await self.supabase_postgres_provider.run_select_statement(statement)
+        return [str(row) for row in rows]

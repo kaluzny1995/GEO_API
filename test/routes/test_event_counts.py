@@ -10,6 +10,7 @@ from starlette.testclient import TestClient
 from main import app
 from model.event_count import EventCategoryCount, EventLocationCount
 from routes.event_counts import get_event_counts_provider
+from util import HTTP_422_UNPROCESSABLE
 
 CATEGORY_ROWS = [
     EventCategoryCount(
@@ -152,5 +153,5 @@ def test_endpoint_rejects_an_out_of_range_limit(client: TestClient, mock_provide
     response = client.get("/event-counts/location", params={"limit": limit})
 
     # Assert
-    assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+    assert response.status_code == HTTP_422_UNPROCESSABLE
     mock_provider.get_event_counts_by_location.assert_not_awaited()

@@ -2,11 +2,12 @@
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from model.data_quality import DataQuality
 from provider.supabase_postgres.supabase_postgres_data_quality_provider import SupabasePostgresDbDataQualityProvider
 from routes.logging_route import LoggingRoute
+from util import HTTP_422_UNPROCESSABLE
 
 router = APIRouter(route_class=LoggingRoute)
 
@@ -70,15 +71,34 @@ async def get_data_quality_for_file_dates(
     dates = [date.strip() for item in file_dates for date in item.split(",") if date.strip()]
     if not dates:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=HTTP_422_UNPROCESSABLE,
             detail="At least one non-empty file_date is required.",
         )
     if len(dates) > 100:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=HTTP_422_UNPROCESSABLE,
             detail="At most 100 file_dates may be requested.",
         )
     return await provider.get_data_quality_for_file_dates(table_name, dates)
+
+
+@router.get("/data-quality/{table_name}/dates", response_model=list[str], tags=["data-quality"])
+async def get_data_quality_file_dates(table_name: str, provider: DataQualityProviderDep) -> list[str]:
+    """Return every snapshot date recorded for a table.
+
+    The authoritative list of ``file_date`` values in ``geo.data_quality`` for
+    ``table_name`` — clients use it to discover snapshots instead of probing a
+    guessed window of dates.
+
+    Args:
+        table_name: Measured table name.
+
+    Returns:
+        The distinct ``file_date`` values in ascending order (``"overall"``
+        sorts last because it is not a date); empty when the table has no
+        metrics.
+    """
+    return await provider.get_file_dates(table_name)
 
 
 @router.get("/data-quality/{table_name}/{file_date}", response_model=list[DataQuality], tags=["data-quality"])

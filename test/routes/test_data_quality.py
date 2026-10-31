@@ -11,6 +11,7 @@ from starlette.testclient import TestClient
 from main import app
 from model.data_quality import DataQuality
 from routes.data_quality import get_data_quality_provider
+from util import HTTP_422_UNPROCESSABLE
 
 ROWS = [
     DataQuality(
@@ -36,6 +37,7 @@ def mock_provider() -> MagicMock:
     provider = MagicMock()
     provider.get_data_quality = AsyncMock(return_value=list(ROWS))
     provider.get_data_quality_for_file_dates = AsyncMock(return_value=list(ROWS))
+    provider.get_file_dates = AsyncMock(return_value=["2026-09-01", "2026-09-02", "overall"])
     return provider
 
 
@@ -139,7 +141,7 @@ class TestGetDataQualityForFileDates:
         response = client.get(request_url)
 
         # Assert
-        assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+        assert response.status_code == HTTP_422_UNPROCESSABLE
         mock_provider.get_data_quality_for_file_dates.assert_not_awaited()
 
     def test_file_dates_endpoint_returns_422_above_the_raw_limit(
@@ -153,7 +155,7 @@ class TestGetDataQualityForFileDates:
         )
 
         # Assert
-        assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+        assert response.status_code == HTTP_422_UNPROCESSABLE
         mock_provider.get_data_quality_for_file_dates.assert_not_awaited()
 
     def test_file_dates_endpoint_returns_422_above_the_normalized_limit(
@@ -169,5 +171,45 @@ class TestGetDataQualityForFileDates:
         )
 
         # Assert
-        assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+        assert response.status_code == HTTP_422_UNPROCESSABLE
         mock_provider.get_data_quality_for_file_dates.assert_not_awaited()
+
+
+class TestGetDataQualityFileDates:
+    """Tests for the snapshot-date discovery endpoint."""
+
+    def test_dates_endpoint_returns_the_distinct_dates(self, client: TestClient, mock_provider: MagicMock) -> None:
+        """GET /data-quality/{table}/dates returns the provider's date list."""
+        # Act
+        response = client.get("/data-quality/usgs_earthquake/dates")
+
+        # Assert
+        assert response.status_code == status.HTTP_200_OK
+        assert response.json() == ["2026-09-01", "2026-09-02", "overall"]
+        mock_provider.get_file_dates.assert_awaited_once_with("usgs_earthquake")
+
+    def test_dates_endpoint_is_not_captured_by_the_file_date_route(
+        self, client: TestClient, mock_provider: MagicMock
+    ) -> None:
+        """`/dates` must resolve to the discovery route, not `/{file_date}`."""
+        # Act
+        response = client.get("/data-quality/usgs_earthquake/dates")
+
+        # Assert
+        assert response.status_code == status.HTTP_200_OK
+        mock_provider.get_file_dates.assert_awaited_once()
+        mock_provider.get_data_quality.assert_not_awaited()
+
+    def test_dates_endpoint_returns_empty_list_for_unknown_table(
+        self, client: TestClient, mock_provider: MagicMock
+    ) -> None:
+        """A table with no metrics yields an empty list, not a 404."""
+        # Arrange
+        mock_provider.get_file_dates = AsyncMock(return_value=[])
+
+        # Act
+        response = client.get("/data-quality/unknown_table/dates")
+
+        # Assert
+        assert response.status_code == status.HTTP_200_OK
+        assert response.json() == []

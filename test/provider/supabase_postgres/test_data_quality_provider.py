@@ -114,3 +114,35 @@ class TestSupabasePostgresDbDataQualityProvider:
 
         assert result == []
         mock_base_provider.run_select_statement.assert_not_awaited()
+
+    async def test_get_file_dates_returns_distinct_dates_for_the_table(
+        self, provider: SupabasePostgresDbDataQualityProvider, mock_base_provider: MagicMock
+    ) -> None:
+        """The distinct file_date values come back as plain strings."""
+        mock_base_provider.run_select_statement = AsyncMock(return_value=["2026-09-01", "2026-09-02", "overall"])
+
+        result = await provider.get_file_dates("usgs_earthquake")
+
+        assert result == ["2026-09-01", "2026-09-02", "overall"]
+        mock_base_provider.run_select_statement.assert_awaited_once()
+        assert "usgs_earthquake" in _statement_params(mock_base_provider).values()
+
+    async def test_get_file_dates_selects_distinct_ordered_file_date(
+        self, provider: SupabasePostgresDbDataQualityProvider, mock_base_provider: MagicMock
+    ) -> None:
+        """The statement is a DISTINCT file_date projection ordered by file_date."""
+        await provider.get_file_dates("usgs_earthquake")
+
+        sql = str(mock_base_provider.run_select_statement.call_args.args[0].compile()).upper()
+        assert "DISTINCT" in sql
+        assert "FILE_DATE" in sql
+        assert "ORDER BY" in sql
+        assert "TABLE_NAME" in sql
+
+    async def test_get_file_dates_returns_empty_list_when_table_has_no_metrics(
+        self, provider: SupabasePostgresDbDataQualityProvider, mock_base_provider: MagicMock
+    ) -> None:
+        """A table without metrics yields an empty list, not None."""
+        mock_base_provider.run_select_statement = AsyncMock(return_value=[])
+
+        assert await provider.get_file_dates("missing_table") == []

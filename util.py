@@ -5,9 +5,23 @@ import os
 import sys
 from collections.abc import Iterator
 from contextvars import ContextVar
-from typing import Any
+from typing import Any, Final
+
+from starlette import status
 
 _LOG_FORMAT = "%(asctime)s %(levelname)s %(message)s"
+
+# starlette 1.0 renamed HTTP_422_UNPROCESSABLE_ENTITY to HTTP_422_UNPROCESSABLE_CONTENT
+# (RFC 9110 terminology) and turned the old name into a module __getattr__ that emits a
+# StarletteDeprecationWarning on every access. FastAPI's own request-validation path uses
+# the new name, so referring to the old one is the only thing that warns here.
+#
+# Resolve to the new constant when the installed starlette has it, else fall back to the
+# literal 422. Both are the same number, and the deprecated name is deliberately never
+# touched (note that ``getattr(status, "…_CONTENT", status.HTTP_422_UNPROCESSABLE_ENTITY)``
+# would still evaluate the default eagerly and therefore still warn), so this is silent on
+# starlette <1.0 — where the new name does not exist — and on >=1.0 alike.
+HTTP_422_UNPROCESSABLE: Final = getattr(status, "HTTP_422_UNPROCESSABLE_CONTENT", 422)
 
 # Logger of the endpoint currently handling a request. Set by the route
 # wrapper (routes/logging_route.py) and read by providers, so database

@@ -6,15 +6,16 @@ Python 3.11 REST API for sharing geographic data from the GEO pipeline.
 
 GEO_API is the data-sharing layer of the GIS data pipeline, sitting alongside [GEO_Download](../GEO_Download), [GEO_ETL](../GEO_ETL) and [GEO_E2E](../GEO_E2E). It serves the clean, analysis-ready datasets loaded into Supabase (PostgreSQL) by GEO_ETL through a FastAPI REST interface, so dashboards, notebooks and other services can consume geographic data over HTTP.
 
-> Status: data endpoints live — `GET /data-quality/...` serves GEO_ETL's `geo.data_quality` metrics and `GET /event-counts/...` serves aggregates over GEO_ETL's `geo.union_etl`; more dataset endpoints to come.
+> Status: data endpoints live — `GET /data-quality/...` serves GEO_ETL's `geo.data_quality` metrics, `GET /data-quantity/...` serves actual `COUNT(*)` row counts, and `GET /event-counts/...` serves aggregates over GEO_ETL's `geo.union_etl`; more dataset endpoints to come.
 
 ## Features
 
 - **Runnable FastAPI app** — `run.py` entry point, Swagger UI at `/docs`, `/health` check, CORS
 - **Data quality metrics** — read-only `GET /data-quality/{table_name}[/{file_date}]` over GEO_ETL's `geo.data_quality` (ETLReddit-style provider layer)
+- **Data quantity counts** — read-only `GET /data-quantity/{file_date}` returns the actual `COUNT(*)` of all 19 tracked tables, plus `GET /data-quantity/dates` for snapshot discovery; always matches the tables, unlike a possibly stale metric
 - **Event counts** — read-only `GET /event-counts/category` and `GET /event-counts/location`, `COUNT(*)` aggregates over GEO_ETL's `geo.union_etl` grouped by five columns
 - **Supabase connector** — SQLModel + SQLAlchemy 2.0 async engine (asyncpg), credentials from `.env` like GEO_ETL, PgBouncer-safe prepared statements
-- **Typed contracts** — Pydantic v2 request/response models (`DataQuality`, `EventCategoryCount`, `EventLocationCount`, `ResponseMessage`)
+- **Typed contracts** — Pydantic v2 request/response models (`DataQuality`, `TableCount`, `EventCategoryCount`, `EventLocationCount`, `ResponseMessage`)
 - **Predictable memory** — one materialization per stage (fetch → convert → serialize), no duplicate result copies, lazy batching, idempotent logging — profiled with `tracemalloc` (see [Memory characteristics](#memory-characteristics))
 - **Per-endpoint logging** — one timestamped log file per endpoint (`logs/<tag>/<handler>_<ts>.log`, file + stdout), request start/finish with status and timing, executed SQL with row counts, tracebacks at the endpoint boundary (see [Logging](#logging))
 - **Dev tooling** — ruff (lint/format), mypy (type checking), tox (isolated checks: lint, format, format-fix, typecheck, py311, warnings)
@@ -173,6 +174,8 @@ Swagger UI: http://127.0.0.1:8000/docs — OpenAPI schema is generated automatic
 | GET      | `/data-quality/{table_name}`             | Overall quality snapshot (`file_date = "overall"`) — list of metrics                |
 | GET      | `/data-quality/{table_name}/{file_date}` | Quality metrics of one `YYYY-MM-DD` snapshot — list of metrics                      |
 | GET      | `/data-quality/{table_name}/file-dates`  | Quality metrics of many snapshots — required `?file_dates=...` (repeated or comma-separated), max 100 |
+| GET      | `/data-quantity/dates`                   | Snapshot dates present in `geo.union_etl` (ascending, then `overall`)               |
+| GET      | `/data-quantity/{file_date}`             | Actual `COUNT(*)` of all 19 tracked tables for a `YYYY-MM-DD` snapshot or `overall` |
 | GET      | `/event-counts/category`                 | `geo.union_etl` row counts grouped by source, event taxonomy and danger rating — optional `?limit=1..1000` (default 100) |
 | GET      | `/event-counts/location`                 | `geo.union_etl` row counts grouped by source, location and danger rating — optional `?limit=1..1000` (default 100) |
 
@@ -204,6 +207,16 @@ columns (`subsource_name`, `event_subcategory`, `state_province`, `danger_rating
 name — the shared scale `no_rating` / `none` / `low` / `medium` / `high` / `extreme` documented
 in [GEO_ETL's single-ETL job](../GEO_ETL/docs/etl_jobs/single-etl.md).
 
+Data-quantity counts are plain `SELECT COUNT(*)` queries against each tracked table
+(`model/data_quantity.py` → `TABLE_NAMES`). For a dated snapshot the query adds
+`WHERE file_date = :file_date`; `overall` counts every row. The response is one
+`TableCount` row per table (`table_name`, `file_date`, `count`). The endpoint reads the
+tables themselves, so it stays correct even when GEO_ETL's `data_quality.total_records`
+metric lags behind a later backfill. `GET /data-quantity/dates` returns the distinct
+`file_date` values in `geo.union_etl` followed by `overall`, so the view never depends on
+a metric snapshot to discover dates. `TABLE_NAMES` mirrors `TABLE_NAMES` in GEO_APP's
+`src/config.js` — keep the two lists in sync when a dataset is added.
+
 `SupabaseServerDownError` anywhere in a request is mapped to **503 Service Unavailable**
 by the global handler in `error_handlers.py`. The engine's connection pool is disposed on
 shutdown via the FastAPI lifespan (`dispose_provider`).
@@ -214,6 +227,7 @@ shutdown via the FastAPI lifespan (`dispose_provider`).
 | ------ | ---- | ---- |
 | 422 | `GET /data-quality/{table_name}/file-dates` called with no `file_dates`, or only empty values | `"At least one non-empty file_date is required."` |
 | 422 | `GET /data-quality/{table_name}/file-dates` with more than 100 dates | `"At most 100 file_dates may be requested."` |
+| 422 | `GET /data-quantity/{file_date}` with a value that is not `overall` or a real `YYYY-MM-DD` date | `"file_date must be 'overall' or a valid YYYY-MM-DD date."` |
 | 422 | `GET /event-counts/*` with `limit` outside 1–1000 | FastAPI/pydantic validation error |
 | 503 | `SupabaseServerDownError` (connection/interface/OSError from asyncpg) anywhere in the request | `ResponseMessage` — `title`, `description`, `code` |
 
@@ -276,7 +290,7 @@ tox -e format-fix      # ruff format (writes the changes)
 tox -e warnings        # tests with warnings-as-errors
 ```
 
-`py311` runs the full pytest suite (87 tests) in an isolated virtualenv.
+`py311` runs the full pytest suite (109 tests) in an isolated virtualenv.
 
 ## Related Projects
 
@@ -298,20 +312,24 @@ GEO_API/
 │   │   ├── cors_middleware_config.py
 │   │   └── supabase_config.py     # .env → asyncpg URL
 │   ├── data_quality.py            # DataQuality — geo.data_quality row layout
+│   ├── data_quantity.py           # TableCount + TABLE_NAMES — actual row counts
 │   ├── event_count.py             # EventCategoryCount / EventLocationCount — count rows
 │   ├── union_etl.py               # geo.union_etl — 21 canonical columns (Core table, no PK)
 │   └── message.py                 # ResponseMessage
 ├── provider/
 │   ├── db/
 │   │   ├── i_db_data_quality_provider.py  # read-only data quality interface
+│   │   ├── i_db_data_quantity_provider.py # read-only row-count interface
 │   │   ├── i_db_event_counts_provider.py  # read-only event counts interface
 │   │   └── i_db_provider.py       # database provider interface (async)
 │   └── supabase_postgres/
 │       ├── supabase_postgres_data_quality_provider.py  # geo.data_quality reads
+│       ├── supabase_postgres_data_quantity_provider.py # COUNT(*) over the tracked tables
 │       ├── supabase_postgres_event_counts_provider.py  # geo.union_etl GROUP BY counts
 │       └── supabase_postgres_provider.py  # SQLModel + asyncpg provider, get_session
 ├── routes/
 │   ├── data_quality.py            # GET /data-quality/...
+│   ├── data_quantity.py           # GET /data-quantity/dates, /data-quantity/{file_date}
 │   ├── event_counts.py            # GET /event-counts/category, /event-counts/location
 │   ├── logging_route.py           # LoggingRoute — per-endpoint log files
 │   └── main.py                    # /, /hello, /health router
@@ -325,7 +343,7 @@ GEO_API/
 ├── run.py                         # uvicorn entry point (config.json → app_run)
 ├── error_handlers.py              # SupabaseServerDownError → 503
 ├── error.py                       # SupabaseServerDownError
-├── util.py                        # logger + batch helpers
+├── util.py                        # logger + batch helpers + HTTP_422_UNPROCESSABLE compat constant
 ├── metadata.json                  # FastAPI metadata (title, description, summary, version)
 ├── config.json                    # app_run (host, port, reload, log_level) + cors_middleware (allow_origins, allow_credentials, allow_methods, allow_headers)
 ├── environment.yml                # conda environment: geo_api_311 (Python 3.11)

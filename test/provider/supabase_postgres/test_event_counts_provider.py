@@ -8,6 +8,9 @@ from model.event_count import EventCategoryCount, EventLocationCount
 from provider.supabase_postgres.supabase_postgres_data_quality_provider import (
     SupabasePostgresDbDataQualityProvider,
 )
+from provider.supabase_postgres.supabase_postgres_data_quantity_provider import (
+    SupabasePostgresDbDataQuantityProvider,
+)
 from provider.supabase_postgres.supabase_postgres_event_counts_provider import (
     SupabasePostgresDbEventCountsProvider,
 )
@@ -194,7 +197,11 @@ class TestSupabasePostgresDbEventCountsProvider:
 
 @pytest.mark.parametrize(
     "provider_class",
-    [SupabasePostgresDbEventCountsProvider, SupabasePostgresDbDataQualityProvider],
+    [
+        SupabasePostgresDbEventCountsProvider,
+        SupabasePostgresDbDataQualityProvider,
+        SupabasePostgresDbDataQuantityProvider,
+    ],
 )
 def test_is_read_only(provider_class: type) -> None:
     """Neither read-only provider exposes create/update/delete methods (read-only contract)."""

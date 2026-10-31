@@ -38,3 +38,22 @@ class IDbDataQualityProvider(ABC):
             The metric rows ordered by ``file_date`` then ``metric``.
         """
         pass
+
+    @abstractmethod
+    async def get_file_dates(self, table_name: str) -> list[str]:
+        """Return every snapshot date recorded for a table.
+
+        Unlike the client-side "probe a rolling window" approach, this is the
+        authoritative list: it is a ``SELECT DISTINCT file_date`` over
+        ``geo.data_quality``, so it never misses snapshots older than any
+        arbitrary window and never invents dates that have no rows.
+
+        Args:
+            table_name: Measured table name.
+
+        Returns:
+            The distinct ``file_date`` values in ascending order (``"overall"``
+            sorts last because it is not a date). Empty when the table has no
+            metrics.
+        """
+        pass

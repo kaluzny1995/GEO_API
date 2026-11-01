@@ -69,10 +69,10 @@ Packages are resolved from conda-forge (geospatial binaries) with ruff, tox and 
 ### Configuration
 
 **Do the Supabase setup in [GEO_E2E](../GEO_E2E) first**: run `../GEO_E2E/setup.sh`, which
-detects the credentials (or re-uses an existing `GEO_E2E/.env.local`) and mirrors the five
+detects the credentials (or re-uses an existing `GEO_E2E/.env`) and mirrors the five
 `SUPABASE_DB_*` values into this project's gitignored `.env` — you configure them once, there,
 and never copy them between projects (full walkthrough in
-[GEO_E2E — Supabase metadata DB](../GEO_E2E/docs/configuration.md#supabase-metadata-db-envlocal)).
+[GEO_E2E — Supabase metadata DB](../GEO_E2E/docs/configuration.md#supabase-metadata-db-env)).
 
 Supabase credentials are read from `.env` in the project root (see `.env.example`) — the same
 five variables as GEO_ETL: `SUPABASE_DB_USER`, `SUPABASE_DB_PASSWORD`, `SUPABASE_DB_HOST`,

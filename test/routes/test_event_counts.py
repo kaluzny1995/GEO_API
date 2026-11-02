@@ -109,7 +109,7 @@ def test_endpoint_returns_200_with_counts(
     assert set(body[0]) == expected_fields
     assert body[0] == rows[0].model_dump()
     assert body[1] == rows[1].model_dump()
-    getattr(mock_provider, method).assert_awaited_once_with(limit=100)
+    getattr(mock_provider, method).assert_awaited_once_with(limit=10000)
     getattr(mock_provider, other_method).assert_not_awaited()
 
 
@@ -135,9 +135,9 @@ def test_endpoint_returns_empty_list_when_no_groups(
     assert response.json() == []
 
 
-@pytest.mark.parametrize("limit", [1, 5, 1000])
+@pytest.mark.parametrize("limit", [1, 5, 1000, 10000])
 def test_endpoint_forwards_an_in_range_limit(client: TestClient, mock_provider: MagicMock, limit: int) -> None:
-    """A limit within 1..1000 reaches the provider unchanged."""
+    """A limit within 1..10,000 reaches the provider unchanged."""
     # Act
     response = client.get("/event-counts/category", params={"limit": limit})
 
@@ -146,9 +146,9 @@ def test_endpoint_forwards_an_in_range_limit(client: TestClient, mock_provider: 
     mock_provider.get_event_counts_by_category.assert_awaited_once_with(limit=limit)
 
 
-@pytest.mark.parametrize("limit", [0, -5, 1001])
+@pytest.mark.parametrize("limit", [0, -5, 10001])
 def test_endpoint_rejects_an_out_of_range_limit(client: TestClient, mock_provider: MagicMock, limit: int) -> None:
-    """Limits outside 1..1000 fail validation (422) and never call the provider."""
+    """Limits outside 1..10,000 fail validation (422) and never call the provider."""
     # Act
     response = client.get("/event-counts/location", params={"limit": limit})
 

@@ -146,3 +146,34 @@ class TestSupabasePostgresDbDataQualityProvider:
         mock_base_provider.run_select_statement = AsyncMock(return_value=[])
 
         assert await provider.get_file_dates("missing_table") == []
+
+    async def test_get_table_names_returns_user_facing_relations(
+        self, provider: SupabasePostgresDbDataQualityProvider, mock_base_provider: MagicMock
+    ) -> None:
+        """The introspection result excludes raw staging tables and data_quality."""
+        mock_base_provider.run_select_statement = AsyncMock(
+            return_value=[
+                ("avalanche_org",),
+                ("avalanche_org_raw",),
+                ("data_quality",),
+                ("metrics_avalanche_vw",),
+                ("union_etl",),
+            ]
+        )
+
+        result = await provider.get_table_names()
+
+        statement = mock_base_provider.run_select_statement.call_args.args[0]
+        sql = str(statement.compile()).upper()
+        assert result == ["avalanche_org", "metrics_avalanche_vw", "union_etl"]
+        assert "INFORMATION_SCHEMA.TABLES" in sql
+        assert "TABLE_SCHEMA" in sql
+        assert "geo" in statement.compile().params.values()
+
+    async def test_get_table_names_returns_empty_list_when_schema_is_empty(
+        self, provider: SupabasePostgresDbDataQualityProvider, mock_base_provider: MagicMock
+    ) -> None:
+        """An empty schema yields an empty list, not an error."""
+        mock_base_provider.run_select_statement = AsyncMock(return_value=[])
+
+        assert await provider.get_table_names() == []

@@ -38,6 +38,9 @@ def mock_provider() -> MagicMock:
     provider.get_data_quality = AsyncMock(return_value=list(ROWS))
     provider.get_data_quality_for_file_dates = AsyncMock(return_value=list(ROWS))
     provider.get_file_dates = AsyncMock(return_value=["2026-09-01", "2026-09-02", "overall"])
+    provider.get_table_names = AsyncMock(
+        return_value=["avalanche_org", "avalanche_org_etl", "metrics_avalanche_vw", "union_etl"]
+    )
     return provider
 
 
@@ -48,6 +51,29 @@ def client(mock_provider: MagicMock) -> Generator[TestClient, None, None]:
     with TestClient(app) as test_client:
         yield test_client
     app.dependency_overrides.clear()
+
+
+class TestGetDataQualityTables:
+    """Tests for the relation-list endpoint that feeds the dropdown."""
+
+    def test_tables_endpoint_returns_the_provider_list(self, client: TestClient, mock_provider: MagicMock) -> None:
+        """GET /data-quality/tables returns every table/view name."""
+        response = client.get("/data-quality/tables")
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.json() == ["avalanche_org", "avalanche_org_etl", "metrics_avalanche_vw", "union_etl"]
+        mock_provider.get_table_names.assert_awaited_once_with()
+        mock_provider.get_data_quality.assert_not_awaited()
+
+    def test_tables_endpoint_is_not_captured_by_the_table_name_route(
+        self, client: TestClient, mock_provider: MagicMock
+    ) -> None:
+        """`/data-quality/tables` must resolve to the discovery route, not `/{table_name}`."""
+        response = client.get("/data-quality/tables")
+
+        assert response.status_code == status.HTTP_200_OK
+        mock_provider.get_table_names.assert_awaited_once()
+        mock_provider.get_data_quality.assert_not_awaited()
 
 
 class TestGetDataQuality:

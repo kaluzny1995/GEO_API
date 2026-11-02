@@ -1,11 +1,24 @@
 """Supabase Postgres provider for data quality metrics."""
 
+import sqlalchemy
 from sqlmodel import select
 
 from model.data_quality import DataQuality
 from provider.db.i_db_data_quality_provider import IDbDataQualityProvider
 from provider.db.i_db_provider import IDbProvider
 from provider.supabase_postgres.supabase_postgres_provider import get_provider
+
+# ``information_schema.tables`` modelled just enough for a name/type projection.
+# A Core Table (not a SQLModel entity) keeps the introspection query plain and
+# lets the shared provider log/execute it like the other select statements.
+_INFORMATION_SCHEMA_TABLES = sqlalchemy.Table(
+    "tables",
+    sqlalchemy.MetaData(),
+    sqlalchemy.Column("table_schema", sqlalchemy.String),
+    sqlalchemy.Column("table_name", sqlalchemy.String),
+    sqlalchemy.Column("table_type", sqlalchemy.String),
+    schema="information_schema",
+)
 
 
 class SupabasePostgresDbDataQualityProvider(IDbDataQualityProvider):
@@ -91,3 +104,24 @@ class SupabasePostgresDbDataQualityProvider(IDbDataQualityProvider):
         )
         rows = await self.supabase_postgres_provider.run_select_statement(statement)
         return [str(row) for row in rows]
+
+    async def get_table_names(self) -> list[str]:
+        """Return every user-facing table/view in the ``geo`` schema.
+
+        ``information_schema.tables`` lists both base tables and views, so the
+        data-quality dropdown follows the database instead of a hardcoded list.
+        Internal ``*_raw`` staging tables and the ``data_quality`` metrics table
+        are filtered out.
+
+        Returns:
+            Relation names in ascending order.
+        """
+        statement = (
+            select(_INFORMATION_SCHEMA_TABLES.c.table_name)
+            .where(_INFORMATION_SCHEMA_TABLES.c.table_schema == "geo")
+            .where(_INFORMATION_SCHEMA_TABLES.c.table_type.in_(("BASE TABLE", "VIEW")))
+            .order_by(_INFORMATION_SCHEMA_TABLES.c.table_name)
+        )
+        rows = await self.supabase_postgres_provider.run_select_statement(statement)
+        names = [str(row[0]) if isinstance(row, (tuple, list)) else str(row) for row in rows]
+        return [name for name in names if name != "data_quality" and not name.endswith("_raw")]

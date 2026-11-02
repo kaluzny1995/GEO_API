@@ -13,11 +13,11 @@ class IDbEventCountsProvider(ABC):
     """
 
     @abstractmethod
-    async def get_event_counts_by_category(self, limit: int = 100) -> list[EventCategoryCount]:
+    async def get_event_counts_by_category(self, limit: int = 10000) -> list[EventCategoryCount]:
         """Return row counts grouped by source, event taxonomy and danger rating.
 
         Args:
-            limit: Maximum number of groups returned (default 100).
+            limit: Maximum number of groups returned (default 10,000).
 
         Returns:
             One row per distinct ``source_name`` / ``subsource_name`` /
@@ -27,11 +27,11 @@ class IDbEventCountsProvider(ABC):
         pass
 
     @abstractmethod
-    async def get_event_counts_by_location(self, limit: int = 100) -> list[EventLocationCount]:
+    async def get_event_counts_by_location(self, limit: int = 10000) -> list[EventLocationCount]:
         """Return row counts grouped by source, location and danger rating.
 
         Args:
-            limit: Maximum number of groups returned (default 100).
+            limit: Maximum number of groups returned (default 10,000).
 
         Returns:
             One row per distinct ``source_name`` / ``subsource_name`` /

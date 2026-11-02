@@ -57,3 +57,19 @@ class IDbDataQualityProvider(ABC):
             metrics.
         """
         pass
+
+    @abstractmethod
+    async def get_table_names(self) -> list[str]:
+        """Return the tables and views available in the ``geo`` schema.
+
+        The dropdown in GEO_APP must not rely on a hardcoded list: the pipeline
+        adds source/ETL tables and, since the ``VIEW`` jobs were introduced,
+        ``*_vw`` relations. This introspection returns every user-facing relation
+        so a newly added table/view appears without a frontend release. Internal
+        ``*_raw`` staging tables and the ``data_quality`` metrics table are
+        excluded.
+
+        Returns:
+            Relation names in ascending order.
+        """
+        pass

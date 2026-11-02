@@ -11,9 +11,9 @@ GEO_API is the data-sharing layer of the GIS data pipeline, sitting alongside [G
 ## Features
 
 - **Runnable FastAPI app** — `run.py` entry point, Swagger UI at `/docs`, `/health` check, CORS
-- **Data quality metrics** — read-only `GET /data-quality/{table_name}[/{file_date}]` over GEO_ETL's `geo.data_quality` (ETLReddit-style provider layer)
+- **Data quality metrics** — read-only `GET /data-quality/{table_name}[/{file_date}]` over GEO_ETL's `geo.data_quality` (ETLReddit-style provider layer), plus `GET /data-quality/tables` for the authoritative table/view list used by the dashboard dropdown
 - **Data quantity counts** — read-only `GET /data-quantity/{file_date}` returns the actual `COUNT(*)` of all 19 tracked tables, plus `GET /data-quantity/dates` for snapshot discovery; always matches the tables, unlike a possibly stale metric
-- **Event counts** — read-only `GET /event-counts/category` and `GET /event-counts/location`, `COUNT(*)` aggregates over GEO_ETL's `geo.union_etl` grouped by five columns
+- **Event counts** — read-only `GET /event-counts/category` and `GET /event-counts/location`, `COUNT(*)` aggregates over GEO_ETL's `geo.union_etl` grouped by five columns; both return every group by default (bounded at 10,000), and the client requests `?limit=10000`
 - **Supabase connector** — SQLModel + SQLAlchemy 2.0 async engine (asyncpg), credentials from `.env` like GEO_ETL, PgBouncer-safe prepared statements
 - **Typed contracts** — Pydantic v2 request/response models (`DataQuality`, `TableCount`, `EventCategoryCount`, `EventLocationCount`, `ResponseMessage`)
 - **Predictable memory** — one materialization per stage (fetch → convert → serialize), no duplicate result copies, lazy batching, idempotent logging — profiled with `tracemalloc` (see [Memory characteristics](#memory-characteristics))
@@ -155,13 +155,15 @@ vary by a few percent):
 
 | Endpoint | Rows out | Peak allocation |
 |----------|----------|-----------------|
-| `GET /event-counts/category` | 124 groups | ~0.36 MiB |
-| `GET /event-counts/location` | 905 groups | ~1.4 MiB |
+| `GET /event-counts/category` | all groups (~150) | ~0.45 MiB |
+| `GET /event-counts/location` | all groups (~1,127) | ~1.7 MiB |
 | `GET /data-quality/{table_name}` | 175 metrics | ~0.53 MiB |
+| `GET /data-quality/tables` | 36 relations | <0.1 MiB |
 
-The two event-count rows above were measured with `?limit=1000` (the table holds 124 and 905
-groups respectively); the default `?limit=100` returns at most 100 groups and so allocates
-proportionally less.
+The event-count rows above are the complete grouped results; the previous
+`?limit=100` default truncated the alphabetically-later sources and the
+`?limit=1000` maximum still cut `USGS_*` out of the location result. The
+endpoints now default to 10,000 groups and GEO_APP requests `?limit=10000`.
 
 Three per-stage optimizations — their impact grows with data volume and process lifetime, so it
 is invisible at today's sizes:
@@ -201,13 +203,14 @@ Swagger UI: http://127.0.0.1:8000/docs — OpenAPI schema is generated automatic
 | GET      | `/`                                      | Liveness message (`ResponseMessage`)                                                |
 | GET      | `/hello`                                 | Liveness message (`ResponseMessage`)                                                |
 | GET      | `/health`                                | Verifies the Supabase Postgres connection — 200 or 503                              |
+| GET      | `/data-quality/tables`                   | Tables/views available in `geo` — list of names for the dashboard dropdown           |
 | GET      | `/data-quality/{table_name}`             | Overall quality snapshot (`file_date = "overall"`) — list of metrics                |
 | GET      | `/data-quality/{table_name}/{file_date}` | Quality metrics of one `YYYY-MM-DD` snapshot — list of metrics                      |
 | GET      | `/data-quality/{table_name}/file-dates`  | Quality metrics of many snapshots — required `?file_dates=...` (repeated or comma-separated), max 100 |
 | GET      | `/data-quantity/dates`                   | Snapshot dates present in `geo.union_etl` (ascending, then `overall`)               |
 | GET      | `/data-quantity/{file_date}`             | Actual `COUNT(*)` of all 19 tracked tables for a `YYYY-MM-DD` snapshot or `overall` |
-| GET      | `/event-counts/category`                 | `geo.union_etl` row counts grouped by source, event taxonomy and danger rating — optional `?limit=1..1000` (default 100) |
-| GET      | `/event-counts/location`                 | `geo.union_etl` row counts grouped by source, location and danger rating — optional `?limit=1..1000` (default 100) |
+| GET      | `/event-counts/category`                 | `geo.union_etl` row counts grouped by source, event taxonomy and danger rating — optional `?limit=1..10000` (default 10,000) |
+| GET      | `/event-counts/location`                 | `geo.union_etl` row counts grouped by source, location and danger rating — optional `?limit=1..10000` (default 10,000) |
 
 Data quality rows come from `geo.data_quality` (written by GEO_ETL's DATA_QUALITY job — metric
 families documented in [GEO_ETL docs](../GEO_ETL/docs/data-quality-metrics.md)). The endpoint is
@@ -220,11 +223,12 @@ overall snapshot the special `file_date` value `"overall"` carries the cross-dat
 
 Event counts aggregate the stacked event table `geo.union_etl` (the canonical 21 columns of
 [GEO_ETL docs](../GEO_ETL/docs/data-tables.md)) with `SELECT … COUNT(*) … GROUP BY`. The only
-filter is the optional `limit` query parameter (`int`, 1–1000, default **100**) applied to the
-*number of groups returned* — it does not filter rows before aggregation, so each `count` is
-always the full size of its group. With the default `limit` the groups are truncated to the
-first 100 (by the ordering below), so the returned `count` values do **not** sum to the table
-size unless you pass `?limit=1000` or the group count is under the limit:
+filter is the optional `limit` query parameter (`int`, 1–10,000, default **10,000**) applied to
+the *number of groups returned* — it does not filter rows before aggregation, so each `count`
+is always the full size of its group. The default returns every group today (about 150 for
+categories and 1,127 for locations); the client passes `?limit=10000` explicitly. The earlier
+default of 100 truncated the alphabetically-later sources, which is why `NIFC`, `OpenMeteo`
+and the `USGS_*` sources were missing from the category/location views:
 
 | Endpoint                  | Grouped by (→ response fields)                                                                           | `count` field                                   |
 | ------------------------- | -------------------------------------------------------------------------------------------------------- | ----------------------------------------------- |
@@ -258,7 +262,7 @@ shutdown via the FastAPI lifespan (`dispose_provider`).
 | 422 | `GET /data-quality/{table_name}/file-dates` called with no `file_dates`, or only empty values | `"At least one non-empty file_date is required."` |
 | 422 | `GET /data-quality/{table_name}/file-dates` with more than 100 dates | `"At most 100 file_dates may be requested."` |
 | 422 | `GET /data-quantity/{file_date}` with a value that is not `overall` or a real `YYYY-MM-DD` date | `"file_date must be 'overall' or a valid YYYY-MM-DD date."` |
-| 422 | `GET /event-counts/*` with `limit` outside 1–1000 | FastAPI/pydantic validation error |
+| 422 | `GET /event-counts/*` with `limit` outside 1–10,000 | FastAPI/pydantic validation error |
 | 503 | `SupabaseServerDownError` (connection/interface/OSError from asyncpg) anywhere in the request | `ResponseMessage` — `title`, `description`, `code` |
 
 ### Logging

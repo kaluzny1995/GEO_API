@@ -26,6 +26,21 @@ def get_data_quality_provider() -> SupabasePostgresDbDataQualityProvider:
 DataQualityProviderDep = Annotated[SupabasePostgresDbDataQualityProvider, Depends(get_data_quality_provider)]
 
 
+@router.get("/data-quality/tables", response_model=list[str], tags=["data-quality"])
+async def get_data_quality_tables(provider: DataQualityProviderDep) -> list[str]:
+    """Return the tables and views available in the ``geo`` schema.
+
+    This is the authoritative source for the GEO_APP table dropdown. It is
+    declared before ``/data-quality/{table_name}`` so ``tables`` is not
+    interpreted as a table name.
+
+    Returns:
+        User-facing relation names in ascending order (``*_raw`` staging tables
+        and ``data_quality`` itself excluded).
+    """
+    return await provider.get_table_names()
+
+
 @router.get("/data-quality/{table_name}", response_model=list[DataQuality], tags=["data-quality"])
 async def get_data_quality(
     table_name: str,

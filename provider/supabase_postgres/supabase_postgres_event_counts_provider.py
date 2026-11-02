@@ -72,11 +72,11 @@ class SupabasePostgresDbEventCountsProvider(IDbEventCountsProvider):
         super().__init__()
         self.supabase_postgres_provider = supabase_postgres_provider or get_provider()
 
-    async def get_event_counts_by_category(self, limit: int = 100) -> list[EventCategoryCount]:
+    async def get_event_counts_by_category(self, limit: int = 10000) -> list[EventCategoryCount]:
         """Return row counts grouped by source, event taxonomy and danger rating.
 
         Args:
-            limit: Maximum number of groups returned (default 100).
+            limit: Maximum number of groups returned (default 10,000).
 
         Returns:
             One row per distinct ``source_name`` / ``subsource_name`` /
@@ -97,11 +97,11 @@ class SupabasePostgresDbEventCountsProvider(IDbEventCountsProvider):
         rows = await self.supabase_postgres_provider.run_select_statement(statement)
         return [_to_count(EventCategoryCount, row) for row in rows]
 
-    async def get_event_counts_by_location(self, limit: int = 100) -> list[EventLocationCount]:
+    async def get_event_counts_by_location(self, limit: int = 10000) -> list[EventLocationCount]:
         """Return row counts grouped by source, location and danger rating.
 
         Args:
-            limit: Maximum number of groups returned (default 100).
+            limit: Maximum number of groups returned (default 10,000).
 
         Returns:
             One row per distinct ``source_name`` / ``subsource_name`` /

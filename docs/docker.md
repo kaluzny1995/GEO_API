@@ -22,7 +22,7 @@ Airflow credentials are not needed for this service.
 
 ```bash
 cd ../GEO_E2E
-docker compose up -d --build geo_fastapi
+./up.sh -d --build geo_fastapi   # preflight (six repos + Supabase .env), then compose up
 ```
 
 After changing GEO_API, rebuild the image — the source is copied at build time, not
@@ -30,7 +30,7 @@ bind-mounted:
 
 ```bash
 docker compose build geo_fastapi
-docker compose up -d geo_fastapi
+./up.sh -d geo_fastapi
 ```
 
 The React dashboard (`geo_react_app`) starts only after this service is healthy.

@@ -65,9 +65,8 @@ class IDbDataQualityProvider(ABC):
         The dropdown in GEO_APP must not rely on a hardcoded list: the pipeline
         adds source/ETL tables and, since the ``VIEW`` jobs were introduced,
         ``*_vw`` relations. This introspection returns every user-facing relation
-        so a newly added table/view appears without a frontend release. Internal
-        ``*_raw`` staging tables and the ``data_quality`` metrics table are
-        excluded.
+        so a newly added table/view appears without a frontend release. The internal
+        ``data_quality`` metrics table is excluded.
 
         Returns:
             Relation names in ascending order.

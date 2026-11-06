@@ -5,10 +5,10 @@ Python 3.11 REST API for sharing geographic data from the GEO pipeline.
 ## Overview
 
 GEO_API is the data-sharing layer of the GIS data pipeline, sitting alongside
-[GEO_Download](../GEO_Download), [GEO_ETL](../GEO_ETL) and [GEO_E2E](../GEO_E2E). It serves
-the clean, analysis-ready datasets loaded into Supabase (PostgreSQL) by GEO_ETL through a
-FastAPI REST interface, so dashboards, notebooks and other services can consume geographic
-data over HTTP.
+[GEO_Download](../GEO_Download), [GEO_ETL](../GEO_ETL), [GEO_E2E](../GEO_E2E),
+[GEO_APP](../GEO_APP) and [GEO_Visual](../GEO_Visual). It serves the clean, analysis-ready
+datasets loaded into Supabase (PostgreSQL) by GEO_ETL through a FastAPI REST interface, so
+dashboards, notebooks and other services can consume geographic data over HTTP.
 
 > Status: data endpoints live — `GET /data-quality/...` serves GEO_ETL's `geo.data_quality`
 > metrics, `GET /data-quantity/...` serves actual `COUNT(*)` row counts,
@@ -106,7 +106,7 @@ For Docker, see [Docker](docs/docker.md); for all endpoint contracts, see
 
 ## Related Projects
 
-GEO_API is one layer of the GIS data pipeline. The five projects sit as siblings under
+GEO_API is one layer of the GIS data pipeline. The six projects sit as siblings under
 `GeographicData/`:
 
 - **[GEO_Download](../GEO_Download)** — fetches the raw data from public geospatial APIs into
@@ -118,3 +118,6 @@ GEO_API is one layer of the GIS data pipeline. The five projects sit as siblings
   its `./setup.sh` also writes this project's `.env` with the shared `SUPABASE_DB_*`
   credentials.
 - **[GEO_APP](../GEO_APP)** — React dashboard that renders what this API serves.
+- **[GEO_Visual](../GEO_Visual)** — Streamlit dashboard served by the `geo_streamlit`
+  container in GEO_E2E; it reads the same Supabase views directly (read-only SQL) and
+  does not go through this API.

@@ -110,8 +110,7 @@ class SupabasePostgresDbDataQualityProvider(IDbDataQualityProvider):
 
         ``information_schema.tables`` lists both base tables and views, so the
         data-quality dropdown follows the database instead of a hardcoded list.
-        Internal ``*_raw`` staging tables and the ``data_quality`` metrics table
-        are filtered out.
+        The internal ``data_quality`` metrics table is filtered out.
 
         Returns:
             Relation names in ascending order.
@@ -124,4 +123,4 @@ class SupabasePostgresDbDataQualityProvider(IDbDataQualityProvider):
         )
         rows = await self.supabase_postgres_provider.run_select_statement(statement)
         names = [str(row[0]) if isinstance(row, (tuple, list)) else str(row) for row in rows]
-        return [name for name in names if name != "data_quality" and not name.endswith("_raw")]
+        return [name for name in names if name != "data_quality"]

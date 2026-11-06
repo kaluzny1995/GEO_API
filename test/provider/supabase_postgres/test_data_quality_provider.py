@@ -150,11 +150,10 @@ class TestSupabasePostgresDbDataQualityProvider:
     async def test_get_table_names_returns_user_facing_relations(
         self, provider: SupabasePostgresDbDataQualityProvider, mock_base_provider: MagicMock
     ) -> None:
-        """The introspection result excludes raw staging tables and data_quality."""
+        """The introspection result excludes the data_quality metrics table."""
         mock_base_provider.run_select_statement = AsyncMock(
             return_value=[
                 ("avalanche_org",),
-                ("avalanche_org_raw",),
                 ("data_quality",),
                 ("metrics_avalanche_vw",),
                 ("union_etl",),

@@ -58,7 +58,8 @@ See [Endpoints](endpoints.md) for the full contract, or the per-domain pages:
 - [Event counts](endpoints/event-counts.md)
 
 If the API is unreachable or times out, GEO_APP shows the red API-down alert with a Retry
-button; HTTP errors are shown as a plain error card. The endpoint-level error contract is in
+button; HTTP errors are shown as a plain error card. GEO_Visual is unaffected by API outages
+because it reads Supabase views directly. The endpoint-level error contract is in
 [Endpoints — Error responses](endpoints.md#error-responses).
 
 ## Docker

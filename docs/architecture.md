@@ -3,9 +3,12 @@
 # Architecture
 
 GEO_API is the read-only HTTP layer between the GEO pipeline's Supabase database and its
-clients (GEO_APP, notebooks, other services). It owns no data: every endpoint selects from
-tables written by [GEO_ETL](../../GEO_ETL) or, for `/data-source-files`, from the CSV metadata
-table published by GEO_ETL's `DATA_SOURCE_FILE` job.
+clients (GEO_APP, notebooks, other services). The sibling GEO_Visual dashboard runs in the
+`geo_streamlit` container and reads the same Supabase views directly (read-only SQL)
+instead of through this API. It owns no data:
+every endpoint selects from tables written by [GEO_ETL](../../GEO_ETL) or, for
+`/data-source-files`, from the CSV metadata table published by GEO_ETL's `DATA_SOURCE_FILE`
+job.
 
 ## Layers
 

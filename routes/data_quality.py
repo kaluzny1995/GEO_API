@@ -35,8 +35,8 @@ async def get_data_quality_tables(provider: DataQualityProviderDep) -> list[str]
     interpreted as a table name.
 
     Returns:
-        User-facing relation names in ascending order (``*_raw`` staging tables
-        and ``data_quality`` itself excluded).
+        User-facing relation names in ascending order (``data_quality`` itself
+        excluded).
     """
     return await provider.get_table_names()
 

@@ -27,12 +27,15 @@ PgBouncer-safe setting — see [Architecture](architecture.md)).
 
 ## `config.json`
 
-`config.json` feeds two Pydantic models:
+`config.json` feeds three Pydantic models:
 
 | Key | Model | Purpose |
 | --- | ----- | ------- |
 | `app_run.host` / `.port` / `.reload` | `AppRunConfig` (`model/config/app_run_config.py`) | uvicorn binding — used by `run.py` |
 | `app_run.log_level` | `AppRunConfig` | uvicorn log level (`"info"`) |
+| `database.pool_size` | `DatabaseConfig` (`model/config/database_config.py`) | pooled async connections kept by the shared engine (`5`) |
+| `database.max_overflow` | `DatabaseConfig` | extra connections above `pool_size` (`5`) |
+| `database.pool_recycle_seconds` | `DatabaseConfig` | recycle pooled connections after this many seconds (`300`) |
 | `cors_middleware.allow_origins` | `CORSMiddlewareConfig` (`model/config/cors_middleware_config.py`) | allowed origins (`["*"]`) |
 | `cors_middleware.allow_credentials` | `CORSMiddlewareConfig` | credentials flag (`false`) |
 | `cors_middleware.allow_methods` | `CORSMiddlewareConfig` | allowed methods (`["*"]`) |

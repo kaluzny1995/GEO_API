@@ -78,6 +78,8 @@ dashboards, notebooks and other services can consume geographic data over HTTP.
 | [Docker](docs/docker.md) | `geo_fastapi` image contents, rebuild commands and ports. |
 | [Logging](docs/logging.md) | Per-endpoint log files, SQL lines and tracebacks. |
 | [Testing](docs/testing.md) | Running pytest, test layout and what is mocked. |
+| [Memory leaks investigation 2026-11-23](docs/memory-leaks-investigation-2026-11-23.md) | Host vs container memory attribution, the 17–23 November growth and the API pool hardening. |
+| [Memory leaks investigation 2026-11-24](docs/memory-leaks-investigation-2026-11-24.md) | Follow-up after the daily run: stable API container, desktop system-monitor growth. |
 | [Development](docs/development.md) | Ruff, mypy and tox environments. |
 
 ## Prerequisites

@@ -13,6 +13,7 @@ from sqlmodel import select
 
 import error
 import util
+from model.config.database_config import DatabaseConfig
 from model.data_quality import DataQuality
 from provider.supabase_postgres import supabase_postgres_provider as provider_module
 from provider.supabase_postgres.supabase_postgres_provider import CONNECTION_ERRORS, SupabasePostgresProvider
@@ -137,6 +138,48 @@ class TestRunSelectStatement:
             await provider.run_select_statement(select(DataQuality))
 
         assert str(connection_error) in str(exc_info.value)
+
+
+class TestEnginePool:
+    """Tests for the shared async engine's pool configuration."""
+
+    def test_default_engine_is_bounded_recycled_and_pre_pinged(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The API engine keeps a small pool, recycles idle connections and pings before use."""
+        # Arrange
+        create_engine = MagicMock()
+        monkeypatch.setattr(provider_module, "create_async_engine", create_engine)
+
+        # Act
+        SupabasePostgresProvider(connection_url="postgresql+asyncpg://user:password@localhost:5432/postgres")
+
+        # Assert
+        kwargs = create_engine.call_args.kwargs
+        expected = DatabaseConfig.from_json()
+        assert kwargs["pool_size"] == expected.pool_size
+        assert kwargs["max_overflow"] == expected.max_overflow
+        assert kwargs["pool_recycle"] == expected.pool_recycle_seconds
+        assert kwargs["pool_pre_ping"] is True
+        assert callable(kwargs["connect_args"]["prepared_statement_name_func"])
+
+    def test_pool_options_are_overridable(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Deployments with more concurrent readers can tune the pool without code changes."""
+        # Arrange
+        create_engine = MagicMock()
+        monkeypatch.setattr(provider_module, "create_async_engine", create_engine)
+
+        # Act
+        SupabasePostgresProvider(
+            connection_url="postgresql+asyncpg://user:password@localhost:5432/postgres",
+            pool_size=11,
+            max_overflow=7,
+            pool_recycle=42,
+        )
+
+        # Assert
+        kwargs = create_engine.call_args.kwargs
+        assert kwargs["pool_size"] == 11
+        assert kwargs["max_overflow"] == 7
+        assert kwargs["pool_recycle"] == 42
 
 
 class TestLogger:

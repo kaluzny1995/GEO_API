@@ -99,6 +99,10 @@ GEO_API/
 
 ## Memory characteristics
 
+The 2026-11-23 host-memory investigation (including the stress test that ruled
+this API out and the pool hardening) is documented in
+[Memory leaks investigation 2026-11-23](memory-leaks-investigation-2026-11-23.md).
+
 Every stage materializes its rows exactly once — DB fetch (`Result.all()`), row →
 response-model conversion, JSON serialization — and keeps no duplicate copy between stages.
 Measured with `tracemalloc` against the live schema (35,799 `geo.union_etl` rows, warm

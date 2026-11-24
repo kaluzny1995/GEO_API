@@ -14,6 +14,7 @@ from sqlmodel.sql.expression import Select, SelectOfScalar
 
 import error
 import util
+from model.config import DatabaseConfig
 from model.config.supabase_config import SupabaseConnectionConfig
 from provider.db.i_db_provider import IDbProvider
 
@@ -80,6 +81,10 @@ class SupabasePostgresProvider(IDbProvider):
         connection_url: str | None = None,
         db_engine: AsyncEngine | None = None,
         logger: logging.Logger | None = None,
+        *,
+        pool_size: int | None = None,
+        max_overflow: int | None = None,
+        pool_recycle: int | None = None,
     ) -> None:
         """Initialize the provider.
 
@@ -90,8 +95,19 @@ class SupabasePostgresProvider(IDbProvider):
             logger: Custom logger. Defaults to the module logger (no file
                 handler — connection failures surface in the calling endpoint's
                 log file via the endpoint boundary traceback).
+            pool_size: Number of connections kept in the pool. Defaults to
+                ``database.pool_size`` in ``config.json``.
+            max_overflow: Extra connections allowed above ``pool_size``.
+                Defaults to ``database.max_overflow`` in ``config.json``.
+            pool_recycle: Recycle pooled connections after this many seconds.
+                Defaults to ``database.pool_recycle_seconds`` in ``config.json``.
         """
         super().__init__()
+        if pool_size is None or max_overflow is None or pool_recycle is None:
+            pool_config = DatabaseConfig.from_json()
+            pool_size = pool_config.pool_size if pool_size is None else pool_size
+            max_overflow = pool_config.max_overflow if max_overflow is None else max_overflow
+            pool_recycle = pool_config.pool_recycle_seconds if pool_recycle is None else pool_recycle
         self.connection_url = connection_url or SupabaseConnectionConfig.from_env().get_connection_url()
         # The Supabase transaction pooler (port 6543) multiplexes many clients over one
         # server connection. asyncpg's default sequential statement names
@@ -100,8 +116,16 @@ class SupabasePostgresProvider(IDbProvider):
         # unique name (SQLAlchemy's documented PgBouncer workaround). The URL also sets
         # `prepared_statement_cache_size=0` — the asyncpg counterpart of JDBC's
         # `prepareThreshold=0` used in GEO_ETL.
+        #
+        # The pool is bounded and recycled: the API can run for weeks, while the pooler
+        # closes idle connections on its side. A recycled + pre-pinged pool never grows
+        # past pool_size + max_overflow and never hands out a dead connection.
         self.db_engine = db_engine or create_async_engine(
             self.connection_url,
+            pool_pre_ping=True,
+            pool_size=pool_size,
+            max_overflow=max_overflow,
+            pool_recycle=pool_recycle,
             connect_args={"prepared_statement_name_func": lambda: f"__asyncpg_{uuid4()}__"},
         )
         self.logger = logger or logging.getLogger(__name__)

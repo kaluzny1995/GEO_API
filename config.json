@@ -5,6 +5,11 @@
     "reload": false,
     "log_level": "info"
   },
+  "database": {
+    "pool_size": 5,
+    "max_overflow": 5,
+    "pool_recycle_seconds": 300
+  },
   "cors_middleware": {
     "allow_origins": ["*"],
     "allow_credentials": false,

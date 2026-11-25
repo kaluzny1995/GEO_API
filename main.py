@@ -7,7 +7,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 import error
-from error_handlers import supabase_server_down_error_handler
+from error_handlers import InternalServerErrorMiddleware, supabase_server_down_error_handler
 from model.config import AppMetadataConfig, CORSMiddlewareConfig
 from provider import dispose_provider
 from routes import data_quality_router, data_quantity_router, data_source_files_router, event_counts_router, main_router
@@ -27,6 +27,9 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 app_metadata_config = AppMetadataConfig.from_json()
 app = FastAPI(**app_metadata_config.model_dump(), lifespan=lifespan)
 
+# Add this before CORS so CORS is the outer middleware and decorates the
+# error middleware's JSON 500 with Access-Control-Allow-Origin.
+app.add_middleware(InternalServerErrorMiddleware)
 cors_middleware_config = CORSMiddlewareConfig.from_json()
 app.add_middleware(CORSMiddleware, **cors_middleware_config.model_dump())
 

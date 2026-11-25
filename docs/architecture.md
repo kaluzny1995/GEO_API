@@ -27,7 +27,7 @@ FastAPI event loop.
 
 ## Request flow
 
-1. `main.py` creates the FastAPI app, adds CORS and registers the routers.
+1. `main.py` creates the FastAPI app, installs the internal-error middleware, adds CORS (outermost) and registers the routers.
 2. A router resolves its provider through a FastAPI dependency.
 3. The provider compiles a SQLModel `select` and runs it through the shared
    `SupabasePostgresProvider`.
@@ -37,7 +37,10 @@ FastAPI event loop.
    log file — see [Logging](logging.md).
 
 `SupabaseServerDownError` is mapped to **503 Service Unavailable** by the global handler in
-`error_handlers.py`. The connection pool is disposed on shutdown through the FastAPI lifespan.
+`error_handlers.py`. Other unhandled exceptions are caught by
+`InternalServerErrorMiddleware` inside CORS and returned as a generic JSON **500**, so a
+browser sees a real HTTP error instead of an opaque CORS failure. The connection pool is
+disposed on shutdown through the FastAPI lifespan.
 
 ## Project structure
 

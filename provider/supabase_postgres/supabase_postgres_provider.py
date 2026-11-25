@@ -120,13 +120,23 @@ class SupabasePostgresProvider(IDbProvider):
         # The pool is bounded and recycled: the API can run for weeks, while the pooler
         # closes idle connections on its side. A recycled + pre-pinged pool never grows
         # past pool_size + max_overflow and never hands out a dead connection.
+        #
+        # ``statement_cache_size=0`` disables asyncpg's own statement cache as well as
+        # SQLAlchemy's (the URL's ``prepared_statement_cache_size=0``). The health-check
+        # ping and pool pre-ping use asyncpg's default named statements; against the
+        # Supabase transaction pooler those names can disappear when the pooler moves a
+        # client between server connections, producing "prepared statement ... does not
+        # exist" 500s. Anonymous statements avoid that failure mode.
         self.db_engine = db_engine or create_async_engine(
             self.connection_url,
             pool_pre_ping=True,
             pool_size=pool_size,
             max_overflow=max_overflow,
             pool_recycle=pool_recycle,
-            connect_args={"prepared_statement_name_func": lambda: f"__asyncpg_{uuid4()}__"},
+            connect_args={
+                "statement_cache_size": 0,
+                "prepared_statement_name_func": lambda: f"__asyncpg_{uuid4()}__",
+            },
         )
         self.logger = logger or logging.getLogger(__name__)
 

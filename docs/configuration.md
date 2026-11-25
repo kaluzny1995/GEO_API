@@ -23,7 +23,10 @@ variables as GEO_ETL:
 
 Environment variables override the file. `SupabaseConnectionConfig.get_connection_url()`
 builds the asyncpg URL with `ssl=require` and `prepared_statement_cache_size=0` (the
-PgBouncer-safe setting — see [Architecture](architecture.md)).
+PgBouncer-safe setting — see [Architecture](architecture.md)). The provider also sets
+asyncpg's own `statement_cache_size=0` and generates unique prepared-statement names, so
+the transaction pooler cannot return a stale or colliding statement; see
+[API timeouts, CORS and Supabase pooling](api-timeouts-and-cors.md).
 
 ## `config.json`
 

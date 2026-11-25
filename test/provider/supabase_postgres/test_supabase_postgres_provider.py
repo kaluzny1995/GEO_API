@@ -159,6 +159,7 @@ class TestEnginePool:
         assert kwargs["max_overflow"] == expected.max_overflow
         assert kwargs["pool_recycle"] == expected.pool_recycle_seconds
         assert kwargs["pool_pre_ping"] is True
+        assert kwargs["connect_args"]["statement_cache_size"] == 0
         assert callable(kwargs["connect_args"]["prepared_statement_name_func"])
 
     def test_pool_options_are_overridable(self, monkeypatch: pytest.MonkeyPatch) -> None:

@@ -35,7 +35,9 @@ The composite primary key is `(table_name, file_date, metric)`. The special
 
 `GET /data-quality/tables` introspects the `geo` schema and returns user-facing table and
 view names in ascending order. The internal `data_quality` metrics table is excluded, so
-newly added source/ETL tables and `*_vw` views appear without a frontend release.
+newly added source/ETL tables and `*_vw` views appear without a frontend release. GEO_APP
+filters the `*_vw` names out of its Data Quality dropdown because the DATA_QUALITY job is
+not implemented for views; the endpoint itself stays a generic schema listing.
 
 ## Snapshot dates
 

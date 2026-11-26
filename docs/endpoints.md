@@ -12,7 +12,7 @@ All data endpoints are read-only and return JSON. The OpenAPI schema is availabl
 | GET | `/` | Liveness message (`ResponseMessage`) |
 | GET | `/hello` | Liveness message (`ResponseMessage`) |
 | GET | `/health` | Verifies the Supabase Postgres connection — 200 or 503 |
-| GET | `/data-quality/tables` | Tables/views available in `geo` — names for the dashboard dropdown |
+| GET | `/data-quality/tables` | Tables/views available in `geo` — the dashboard filters `*_vw` out of its dropdown |
 | GET | `/data-quality/{table_name}` | Overall quality snapshot (`file_date = "overall"`) |
 | GET | `/data-quality/{table_name}/dates` | Every snapshot date recorded for a table |
 | GET | `/data-quality/{table_name}/file-dates` | Quality metrics of many snapshots — required `?file_dates=...`, max 100 |
